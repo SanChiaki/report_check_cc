@@ -11,9 +11,6 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CheckResult:
     """Result of a single check rule."""
-    rule_id: str
-    rule_name: str
-    rule_type: str
     status: str = "error"
     location: dict = field(default_factory=dict)
     message: str = ""
@@ -21,6 +18,9 @@ class CheckResult:
     example: str = ""
     confidence: float = 1.0
     execution_time: float = 0.0
+    rule_id: str = ""
+    rule_name: str = ""
+    rule_type: str = ""
 
 
 class BaseChecker(ABC):
@@ -81,7 +81,7 @@ Only include the JSON in your response, no other text."""
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                response = await self.model_manager.generate(prompt)
+                response = await self.model_manager.call_text_model(prompt)
                 return self._parse_location_response(response)
             except Exception as e:
                 if attempt == max_retries - 1:

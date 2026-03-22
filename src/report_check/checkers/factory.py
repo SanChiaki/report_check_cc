@@ -3,6 +3,8 @@ from typing import Type
 
 from .base import BaseChecker
 from .text import TextChecker
+from .semantic import SemanticChecker
+from .image import ImageChecker
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +14,8 @@ class CheckerFactory:
 
     CHECKER_MAP = {
         "text": TextChecker,
+        "semantic": SemanticChecker,
+        "image": ImageChecker,
     }
 
     @classmethod
