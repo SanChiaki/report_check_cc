@@ -1,0 +1,18 @@
+server:
+  host: "0.0.0.0"
+  port: 8000
+
+storage:
+  database_path: "data/reports.db"
+  upload_path: "data/uploads"
+
+limits:
+  max_file_size_mb: 20
+  max_cells: 50000
+  max_images: 50
+  rate_limit: "10/minute"
+
+summarizer:
+  max_cell_length: 200
+  max_summary_length: 4000
+  max_region_length: 8000
