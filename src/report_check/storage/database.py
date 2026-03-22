@@ -88,7 +88,7 @@ class Database:
                     task["context_vars"] = json.loads(task["context_vars"])
                 return task
 
-    async def update_task_status(self, task_id: str, status: TaskStatus):
+    async def update_task_status(self, task_id: str, status: TaskStatus, error: str | None = None):
         async with aiosqlite.connect(self.db_path) as db:
             if status == TaskStatus.PROCESSING:
                 await db.execute(
@@ -97,8 +97,8 @@ class Database:
                 )
             elif status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
                 await db.execute(
-                    "UPDATE tasks SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE task_id = ?",
-                    (status.value, task_id),
+                    "UPDATE tasks SET status = ?, completed_at = CURRENT_TIMESTAMP, error = ? WHERE task_id = ?",
+                    (status.value, error, task_id),
                 )
             else:
                 await db.execute(
