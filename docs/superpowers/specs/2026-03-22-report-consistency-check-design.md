@@ -19,7 +19,8 @@
 - **报告格式**：Excel 文件，通常单个工作表，结构不固定（模板自由）
 - **图片规模**：每份报告 1-5 张图片，图片检查规则 1-3 条
 - **报告类型**：10-20 种，有不同的业务流程
-- **并发量**：1-5 个报告同时处理，需快速响应（30 秒内），支持横向扩展
+- **并发量**：1-5 个报告同时处理，需快速完成检查（30 秒内），架构预留横向扩展能力
+- **v1 范围**：v1 为单实例部署，横向扩展作为未来规划（见 11.3 节）
 - **规则配置者**：技术人员和业务人员共用同一套 DSL，前端提供可视化配置
 - **外部 API**：已存在，有明确接口文档，只需调用
 - **AI 模型**：开发阶段使用 OpenAI，生产环境使用内部部署的 Qwen
@@ -237,7 +238,9 @@
       "timeout": 10
     },
     "validation": {
-      "success_condition": "response.status == 'valid'",
+      "success_field": "status",
+      "success_value": "valid",
+      "operator": "eq",
       "error_message": "签名验证失败"
     }
   }
@@ -279,7 +282,26 @@
 }
 ```
 
-### 3.4 规则继承和覆盖
+### 3.4 变量插值
+
+规则 DSL 中支持 `${variable}` 语法引用变量。变量来源有两类：
+
+**1. 上下文变量（由调用方通过 API 的 `context_vars` 参数传入）：**
+- `${report_id}`：报告 ID
+- `${project_id}`：项目 ID
+- 其他业务方自定义的变量
+
+**2. 环境变量（由服务端配置）：**
+- `${API_TOKEN}`：外部 API 认证令牌
+- 其他以 `${ENV_*}` 前缀的环境变量
+
+**3. 内置变量（由系统自动生成）：**
+- `${extracted_content}`：当前规则中 `extract` 步骤提取到的内容
+- `${task_id}`：当前任务 ID
+
+变量解析失败时（未找到变量），该规则返回 `error` 状态，错误信息中标明缺失的变量名。
+
+### 3.5 规则继承和覆盖
 
 支持基础规则模板 + 用户自定义规则的组合：
 
@@ -291,7 +313,12 @@
 }
 ```
 
-用户自定义规则追加到基础规则后，`rule_id` 相同时覆盖基础规则。
+规则合并逻辑：
+1. 从 `rule_templates` 表加载 `base_template` 对应的基础规则列表
+2. 用户自定义 `rules` 追加到基础规则列表末尾
+3. 如果自定义规则的 `id` 与基础规则相同，则覆盖基础规则（替换整条规则）
+4. 自定义规则可以通过 `"enabled": false` + 相同 `id` 来禁用某条基础规则
+5. 最终按合并后的顺序依次执行（规则之间无依赖关系，v1 不支持 `depends_on`）
 
 ---
 
@@ -319,9 +346,27 @@ class BaseChecker(ABC):
 报告结构：
 {summary}
 
-请返回最可能包含该内容的单元格范围。"""
+请以 JSON 格式返回结果：
+{{
+  "found": true/false,
+  "locations": [
+    {{
+      "cell_range": "B3:D5",
+      "context": "在移交记录章节中",
+      "confidence": 0.9
+    }}
+  ],
+  "reason": "定位理由"
+}}"""
         response = await self.model_manager.call_text_model(prompt)
-        return self._parse_location_response(response)
+        locations = self._parse_location_response(response)
+
+        # 如果 AI 返回格式异常，重试一次；仍失败则返回空列表
+        if locations is None:
+            response = await self.model_manager.call_text_model(prompt)
+            locations = self._parse_location_response(response)
+
+        return locations or []
 ```
 
 ### 4.2 五种检查器
@@ -387,8 +432,8 @@ default_provider: openai
 providers:
   openai:
     api_key: ${OPENAI_API_KEY}
-    text_model: gpt-4
-    multimodal_model: gpt-4-vision-preview
+    text_model: gpt-4o
+    multimodal_model: gpt-4o
     base_url: https://api.openai.com/v1
 
   qwen:
@@ -414,7 +459,14 @@ providers:
 
 不做表格结构检测，由 AI 自行理解报告逻辑结构。
 
-### 6.2 数据模型
+### 6.2 图片处理
+
+- **附近文字范围**：图片锚点上下各 3 行、左右各 3 列的非空单元格
+- **嵌入式 vs 浮动图片**：openpyxl 统一通过 `ws._images` 获取，浮动图片使用 `TwoCellAnchor` 定位，嵌入式使用 `OneCellAnchor` 定位，均提取锚点行列
+- **格式转换**：openpyxl 可能提取到 EMF/WMF 等格式，多模态模型无法处理。解析时统一转换为 PNG（使用 Pillow），转换失败的图片跳过并记录警告
+- **尺寸限制**：图片分辨率超过 2048x2048 时等比缩放，控制传给多模态模型的数据量
+
+### 6.3 数据模型
 
 ```python
 @dataclass
@@ -448,8 +500,9 @@ class ReportData:
 
 1. **空行空列压缩**：跳过连续空白区域，不在摘要中生成无意义的位置信息
 2. **内容截断**：单元格内容超过 200 字符时截断，保留前 200 字符 + "..."
-3. **分块策略**：报告总文本超过阈值（如 4000 字符）时，按区域分块传给 AI，而非一次性全部传入
-4. **按需加载**：AI 定位阶段传压缩摘要，验证阶段再传具体区域的完整内容
+3. **两阶段策略**：定位阶段传压缩摘要（上限 4000 字符），验证阶段传定位到的具体区域的完整内容（上限 8000 字符）
+4. **超限处理**：如果单条规则检查的内容超过模型上下文窗口，按行分块处理，每块保留前后 3 行重叠以维持上下文连续性
+5. **跨区域规则**：如果规则需要检查多个区域的一致性（如"签名人与移交人一致"），定位阶段返回多个区域，验证阶段将多个区域内容拼接后一次性传给 AI
 
 ### 6.4 报告摘要生成
 
@@ -546,9 +599,16 @@ POST /api/v1/check/submit
 Content-Type: multipart/form-data
 
 参数：
-  - file: Excel 文件（.xlsx）
+  - file: Excel 文件（.xlsx / .xls）
   - rules: JSON 格式的规则 DSL 字符串
   - report_type: 报告类型（可选）
+  - context_vars: JSON 格式的上下文变量（可选，如 report_id、project_id 等）
+
+上传限制：
+  - 文件大小上限：20MB
+  - 仅接受 .xlsx / .xls 扩展名，并校验文件 magic bytes
+  - 单个报告最大单元格数：50,000
+  - 单个报告最大图片数：50
 
 响应：
 {
@@ -601,14 +661,36 @@ GET /api/v1/check/result/{task_id}
 }
 ```
 
-### 8.3 规则模板管理
+### 8.3 规则 DSL 验证
+
+```
+POST /api/v1/rules/validate
+Content-Type: application/json
+
+参数：
+  - rules: JSON 格式的规则 DSL
+
+响应：
+{
+  "valid": true/false,
+  "errors": [
+    {
+      "rule_id": "rule_001",
+      "field": "config.keywords",
+      "message": "keywords 不能为空"
+    }
+  ]
+}
+```
+
+### 8.4 规则模板管理
 
 ```
 GET  /api/v1/templates               # 列出模板
 GET  /api/v1/templates/{template_id}  # 获取模板详情
 ```
 
-### 8.4 错误处理
+### 8.5 错误处理
 
 统一错误响应格式：
 
@@ -622,14 +704,34 @@ GET  /api/v1/templates/{template_id}  # 获取模板详情
 ```
 
 错误码：
+- `FILE_TOO_LARGE`：文件超过大小限制（20MB）
+- `FILE_FORMAT_ERROR`：文件格式不合法（非 Excel 文件）
 - `RULE_VALIDATION_ERROR`：规则 DSL 格式或内容不合法
 - `EXCEL_PARSE_ERROR`：Excel 文件解析失败
 - `MODEL_ERROR`：AI 模型调用失败
+- `VARIABLE_MISSING`：规则中引用的变量未提供
 - `INTERNAL_ERROR`：服务器内部错误
 
-### 8.5 限流
+### 8.6 限流
 
 提交接口限制每分钟 10 次请求（基于客户端 IP）。
+
+### 8.7 认证
+
+v1 不实现认证机制，适用于内网部署场景。如需对外暴露，后续可通过 API Gateway 或 FastAPI 中间件添加 API Key / JWT 认证。
+
+### 8.8 CORS
+
+FastAPI 配置 CORS 中间件，允许 Vue 前端跨域访问：
+
+```python
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 生产环境应限制为前端域名
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
 
 ---
 
@@ -638,6 +740,8 @@ GET  /api/v1/templates/{template_id}  # 获取模板详情
 ### 9.1 任务队列
 
 初期使用 Python asyncio 内存队列。未来可替换为 Redis / Celery。
+
+**崩溃恢复策略：** 进程启动时扫描 tasks 表，将所有 `processing` 状态的任务重置为 `pending` 并重新入队。`pending` 状态的任务同样重新入队。这确保进程重启（崩溃、部署、OOM）后不会丢失任务。
 
 ### 9.2 后台工作进程
 
@@ -800,9 +904,13 @@ services:
     restart: unless-stopped
 ```
 
-### 11.3 横向扩展
+### 11.3 横向扩展（未来规划）
 
-当前架构为无状态设计（数据存储在 SQLite），横向扩展时：
-- 将 SQLite 替换为 PostgreSQL
-- 将内存任务队列替换为 Redis / Celery
-- 通过负载均衡分发请求到多个容器实例
+v1 为单实例部署，SQLite + 内存队列满足当前 1-5 并发需求。未来需要横向扩展时的迁移路径：
+
+1. **数据库**：SQLite → PostgreSQL（数据访问层已通过 Database 类封装，切换成本低）
+2. **任务队列**：内存队列 → Redis + Celery（TaskQueue 接口不变，替换实现）
+3. **文件存储**：本地磁盘 → 对象存储（S3 / MinIO）
+4. **部署**：单容器 → 多容器 + 负载均衡
+
+设计上已为此预留：存储层通过类封装、任务队列通过接口抽象、应用本身无状态。
