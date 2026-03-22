@@ -5,6 +5,8 @@ from .base import BaseChecker
 from .text import TextChecker
 from .semantic import SemanticChecker
 from .image import ImageChecker
+from .api_check import ApiChecker
+from .external import ExternalDataChecker
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +18,8 @@ class CheckerFactory:
         "text": TextChecker,
         "semantic": SemanticChecker,
         "image": ImageChecker,
+        "api": ApiChecker,
+        "external_data": ExternalDataChecker,
     }
 
     @classmethod
