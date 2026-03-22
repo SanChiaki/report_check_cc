@@ -247,6 +247,31 @@
 }
 ```
 
+**validation.operator 支持的操作符：**
+
+| 操作符 | 说明 | 示例 |
+|--------|------|------|
+| `eq` | 等于 | `"status" eq "valid"` |
+| `neq` | 不等于 | `"status" neq "rejected"` |
+| `contains` | 包含子串 | `"message" contains "success"` |
+| `gt` | 大于（数值） | `"confidence" gt 0.8` |
+| `gte` | 大于等于 | `"score" gte 60` |
+
+v1 仅支持单字段条件。复合条件（如 `status == "valid" AND confidence > 0.8`）作为未来扩展。
+
+**外部 API 调用策略：**
+- 默认超时：10 秒（可在规则中通过 `api.timeout` 覆盖）
+- 单个任务内，同一外部 API 连续失败 3 次后，后续引用该 API 的规则直接标记为 `error`，不再调用（快速失败）
+- 限流器状态为内存存储，进程重启后重置（v1 可接受）
+
+**extract.fallback 支持的策略：**
+
+| 策略 | 说明 |
+|------|------|
+| `last_image` | 使用报告中最后一张图片 |
+| `first_image` | 使用报告中第一张图片 |
+| `none` | 不使用 fallback，直接返回 error（默认） |
+
 #### 3.3.5 外部数据检查（type: "external_data"）
 
 获取外部数据后结合 AI 分析。
@@ -368,6 +393,13 @@ class BaseChecker(ABC):
 
         return locations or []
 ```
+
+**locate_content 返回值语义：**
+- AI 返回 `found: true` + locations → 返回定位列表，检查器对定位到的内容执行检查
+- AI 返回 `found: false` → 返回空列表，检查器将规则状态标记为 `failed`（内容未找到），而非 `error`
+- AI 返回格式异常（无法解析 JSON）→ 重试一次，仍失败返回 `None`，检查器将规则状态标记为 `error`
+
+即：`found: false` 是合法的检查失败（报告中确实没有该内容），格式异常是系统错误。
 
 ### 4.2 五种检查器
 
@@ -494,7 +526,7 @@ class ReportData:
     metadata: Dict[str, Any]
 ```
 
-### 6.3 Token 优化策略
+### 6.4 Token 优化策略
 
 报告内容传给 AI 时需要控制 token 消耗：
 
@@ -504,7 +536,7 @@ class ReportData:
 4. **超限处理**：如果单条规则检查的内容超过模型上下文窗口，按行分块处理，每块保留前后 3 行重叠以维持上下文连续性
 5. **跨区域规则**：如果规则需要检查多个区域的一致性（如"签名人与移交人一致"），定位阶段返回多个区域，验证阶段将多个区域内容拼接后一次性传给 AI
 
-### 6.4 报告摘要生成
+### 6.5 报告摘要生成
 
 ```python
 class ReportSummarizer:
@@ -586,11 +618,26 @@ CREATE INDEX idx_check_results_task_id ON check_results(task_id);
 
 ### 7.3 缓存
 
-图片检查结果使用内存缓存，键为 `md5(image_data) + md5(requirement)`，避免同一图片重复分析。
+图片检查结果使用内存缓存，键为 `md5(image_data):md5(requirement)`（冒号分隔），避免同一图片重复分析。
 
 ---
 
 ## 8. API 接口设计
+
+### 8.0 健康检查
+
+```
+GET /api/v1/health
+
+响应：
+{
+  "status": "ok",
+  "queue_size": 3,
+  "version": "1.0.0"
+}
+```
+
+用于 Docker 容器的 liveness/readiness 探针。
 
 ### 8.1 提交检查任务
 
@@ -741,7 +788,7 @@ app.add_middleware(
 
 初期使用 Python asyncio 内存队列。未来可替换为 Redis / Celery。
 
-**崩溃恢复策略：** 进程启动时扫描 tasks 表，将所有 `processing` 状态的任务重置为 `pending` 并重新入队。`pending` 状态的任务同样重新入队。这确保进程重启（崩溃、部署、OOM）后不会丢失任务。
+**崩溃恢复策略：** 进程启动时扫描 tasks 表，将所有 `processing` 状态的任务重置为 `pending` 并重新入队。`pending` 状态的任务同样重新入队。重新执行前，先删除该任务已有的 `check_results` 记录，避免产生重复结果。
 
 ### 9.2 后台工作进程
 
@@ -886,8 +933,6 @@ CMD ["uv", "run", "uvicorn", "report_check.main:app", "--host", "0.0.0.0", "--po
 ### 11.2 docker-compose.yaml
 
 ```yaml
-version: "3.8"
-
 services:
   app:
     build: .
@@ -901,6 +946,11 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - QWEN_API_KEY=${QWEN_API_KEY}
       - MODEL_PROVIDER=${MODEL_PROVIDER:-openai}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
 ```
 
