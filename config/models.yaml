@@ -5,10 +5,10 @@ providers:
     api_key: ${OPENAI_API_KEY}
     text_model: gpt-4o
     multimodal_model: gpt-4o
-    base_url: https://api.openai.com/v1
+    base_url: ${OPENAI_API_BASE_URL}
 
   qwen:
-    base_url: http://internal-qwen-api:8000
+    base_url: ${QWEN_API_BASE_URL}
     api_key: ${QWEN_API_KEY}
     text_model: qwen-turbo
     multimodal_model: qwen-vl-plus

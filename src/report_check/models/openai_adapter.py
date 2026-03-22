@@ -6,7 +6,10 @@ from report_check.models.base import BaseModelAdapter, ModelType
 class OpenAIAdapter(BaseModelAdapter):
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
-        self.client = AsyncOpenAI(api_key=config.get("api_key", ""), base_url=config.get("base_url"))
+        base_url = config.get("base_url") or None
+        if base_url and not base_url.rstrip("/").endswith("/v1"):
+            base_url = base_url.rstrip("/") + "/v1"
+        self.client = AsyncOpenAI(api_key=config.get("api_key", ""), base_url=base_url)
         self.text_model = config.get("text_model", "gpt-4o")
         self.multimodal_model = config.get("multimodal_model", "gpt-4o")
 

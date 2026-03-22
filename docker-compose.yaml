@@ -9,7 +9,9 @@ services:
       - ./config:/app/config
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL}
       - QWEN_API_KEY=${QWEN_API_KEY}
+      - QWEN_API_BASE_URL=${QWEN_API_BASE_URL}
       - MODEL_PROVIDER=${MODEL_PROVIDER:-openai}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]

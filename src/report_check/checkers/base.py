@@ -58,25 +58,35 @@ class BaseChecker(ABC):
         Returns:
             List of locations or None if not found
         """
-        prompt = f"""Find content matching this description in the report:
-Description: {description}
-{f'Context hint: {context_hint}' if context_hint else ''}
+        from report_check.parser.summarizer import ReportSummarizer
+        summarizer = ReportSummarizer()
+        report_summary = summarizer.summarize(self.report_data)
 
-Respond with JSON in this format:
+        prompt = f"""以下是 Excel 报告的内容摘要：
+
+{report_summary}
+
+请在上述报告中找出符合以下描述的内容：
+描述：{description}
+{f'提示：{context_hint}' if context_hint else ''}
+
+请以 JSON 格式回复，格式如下：
 {{
   "found": true/false,
   "locations": [
     {{
-      "sheet": "sheet_name",
+      "sheet": "工作表名",
       "cell": "A1",
+      "cell_range": "A1:B3",
       "row": 1,
       "column": 1,
-      "content": "text content"
+      "content": "找到的文本内容",
+      "context": "上下文说明"
     }}
   ]
 }}
 
-Only include the JSON in your response, no other text."""
+只返回 JSON，不要有其他文字。"""
 
         max_retries = 3
         for attempt in range(max_retries):

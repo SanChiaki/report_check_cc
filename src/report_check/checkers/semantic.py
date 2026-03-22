@@ -38,7 +38,7 @@ class SemanticChecker(BaseChecker):
         # Step 2: Verify content at located region
         summarizer = ReportSummarizer()
         for loc in locations:
-            cell_range = loc.get("cell_range", "")
+            cell_range = loc.get("cell_range", "") or loc.get("cell", "")
             # Parse cell range to get rows
             region_text = self._get_region_text(summarizer, cell_range)
 

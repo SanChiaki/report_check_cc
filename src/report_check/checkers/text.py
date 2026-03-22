@@ -97,7 +97,7 @@ class TextChecker(BaseChecker):
             message = f"Found {total_occurrences} occurrence(s) of keywords: {', '.join(found_keywords)}"
             suggestion = "Content matches the expected keywords."
             example = found_keywords[0]
-            return "pass", message, location, suggestion, example
+            return "passed", message, location, suggestion, example
         else:
             message = f"Required keywords not found. Expected at least {min_occurrences} occurrence(s)."
             suggestion = f"Add content containing any of these keywords: {', '.join(keywords)}"
@@ -122,7 +122,7 @@ class TextChecker(BaseChecker):
             message = f"All required keywords found with at least {min_occurrences} occurrence(s) each"
             suggestion = "Content matches all required keywords."
             example = found_keywords[0] if found_keywords else ""
-            return "pass", message, location, suggestion, example
+            return "passed", message, location, suggestion, example
         else:
             if missing_keywords:
                 message = f"Missing required keywords: {', '.join(missing_keywords)}"
@@ -154,7 +154,7 @@ class TextChecker(BaseChecker):
             message = "All required keywords found exactly"
             suggestion = "Content matches exactly."
             example = found_keywords[0] if found_keywords else ""
-            return "pass", message, location, suggestion, example
+            return "passed", message, location, suggestion, example
         else:
             missing = [k for k in keywords if k not in found_keywords]
             message = f"Not all keywords found. Missing: {', '.join(missing)}"

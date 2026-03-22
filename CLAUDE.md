@@ -1,0 +1,113 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## 项目概述
+
+AI 驱动的 Excel 报告一致性检查系统，支持五种检查类型：文本、语义、图片、API 和外部数据验证。
+
+## 开发命令
+
+**后端开发：**
+```bash
+uv sync                                    # 安装依赖
+uv run uvicorn report_check.main:app --reload  # 启动开发服务器 (http://localhost:8000)
+uv run pytest                              # 运行测试
+uv run pytest tests/test_specific.py       # 运行单个测试文件
+```
+
+**前端开发：**
+```bash
+cd frontend && npm install                 # 安装依赖
+cd frontend && npm run dev                 # 启动开发服务器 (http://localhost:5173)
+```
+
+**Docker 部署（仅后端）：**
+```bash
+cp .env.example .env                       # 配置环境变量（必须包含 OPENAI_API_BASE_URL）
+docker compose up -d                       # 后台启动后端服务
+docker compose logs -f app                 # 查看后端日志
+docker compose down                        # 停止服务
+```
+
+**前端独立部署：**
+```bash
+cd frontend
+npm install
+npm run build                              # 构建生产版本到 dist/
+# 将 dist/ 目录部署到 Nginx、CDN 或其他静态托管服务
+```
+
+**注意事项：**
+- Docker 仅包含后端服务（端口 8000）
+- 前端需要独立部署，通过环境变量或构建时配置指向后端 API 地址
+- 后端已配置 CORS，支持跨域访问
+- 本地开发时前端使用 Vite 代理（`npm run dev`），生产环境直接请求后端
+
+## 架构设计
+
+### 核心组件
+
+1. **CheckerFactory + BaseChecker 模式**
+   - 所有检查器继承 `BaseChecker` (src/report_check/checkers/base.py)
+   - 通过 `CheckerFactory.create(type, ...)` 创建检查器实例
+   - 五种检查器：TextChecker, SemanticChecker, ImageChecker, ApiChecker, ExternalDataChecker
+   - 每个检查器返回 `CheckResult` 数据类
+
+2. **异步任务队列架构**
+   - `TaskQueue` (worker/queue.py): 内存队列，使用 asyncio.Queue
+   - `BackgroundWorker` (worker/worker.py): 后台工作进程，启动时自动恢复孤儿任务
+   - `Database` (storage/database.py): SQLite 存储，跟踪任务状态 (pending/processing/completed/failed)
+   - 任务提交流程：API → 创建任务 → 入队 → Worker 处理 → 更新结果
+
+3. **规则引擎**
+   - `RuleEngine` (engine/rule_engine.py): 合并基础规则和用户规则，过滤禁用规则
+   - `VariableResolver` (engine/variable_resolver.py): 解析规则配置中的变量引用 (如 `${task_id}`)
+   - 规则 DSL 格式：`{"rules": [{"id": "r1", "name": "...", "type": "text|semantic|image|api|external_data", "config": {...}}]}`
+
+4. **AI 模型管理**
+   - `ModelManager` (models/manager.py): 统一接口，支持多提供商
+   - `OpenAIAdapter` / `QwenAdapter`: 适配器模式，封装不同 API
+   - 配置文件：config/models.yaml，支持环境变量替换
+
+5. **容错机制**
+   - 孤儿任务恢复：启动时自动重新入队未完成的 processing 任务
+   - API 熔断器：同一 API 连续失败 3 次后跳过后续调用
+   - AI 调用重试：locate_content 方法最多重试 3 次
+
+### 数据流
+
+```
+用户上传 Excel + 规则 DSL
+  ↓
+FastAPI 接收 (api/router.py)
+  ↓
+创建任务并入队 (worker/queue.py)
+  ↓
+BackgroundWorker 处理 (worker/worker.py)
+  ├─ ExcelParser 解析 Excel (parser/excel.py)
+  ├─ RuleEngine 合并规则 (engine/rule_engine.py)
+  ├─ VariableResolver 解析变量 (engine/variable_resolver.py)
+  ├─ CheckerFactory 创建检查器 (checkers/factory.py)
+  └─ 执行检查并保存结果 (storage/database.py)
+  ↓
+前端轮询获取结果 (/api/v1/check/result/{task_id})
+```
+
+## 重要约定
+
+1. **检查器开发**：新增检查器需继承 `BaseChecker`，实现 `check(rule_config)` 方法，并在 `CheckerFactory` 注册
+2. **AI 调用**：使用 `model_manager.call_text_model()` 或 `call_multimodal_model()`，不要直接调用 OpenAI/Qwen API
+3. **位置定位**：使用 `BaseChecker.locate_content(description)` 让 AI 在报告中定位内容
+4. **错误处理**：检查器异常应返回 `CheckResult(status="error", message="...")`，不要抛出异常
+5. **配置管理**：环境变量通过 config/models.yaml 和 .env 管理，使用 `${VAR_NAME}` 语法
+
+## 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `OPENAI_API_KEY` | OpenAI API Key | - |
+| `OPENAI_API_BASE_URL` | OpenAI API 基础 URL | - |
+| `QWEN_API_KEY` | Qwen API Key | - |
+| `QWEN_API_BASE_URL` | Qwen API 基础 URL | - |
+| `MODEL_PROVIDER` | 默认模型提供商 | `openai` |
