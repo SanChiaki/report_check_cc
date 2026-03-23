@@ -1,14 +1,20 @@
 import logging
 import time
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from .base import BaseChecker, CheckResult
+
+if TYPE_CHECKING:
+    from report_check.storage.artifacts import CheckArtifact
 
 logger = logging.getLogger(__name__)
 
 
 class TextChecker(BaseChecker):
     """Checker for text-based rules."""
+
+    def __init__(self, report_data, model_manager, artifacts: "CheckArtifact | None" = None):
+        super().__init__(report_data, model_manager, artifacts=artifacts)
 
     def check(self, rule_config) -> CheckResult:
         """Execute a text check rule.
@@ -36,6 +42,15 @@ class TextChecker(BaseChecker):
         case_sensitive = rule_config.get("case_sensitive", False)
         min_occurrences = rule_config.get("min_occurrences", 1)
 
+        # Save config to artifacts
+        if self.artifacts:
+            self.artifacts.save_check_detail({
+                "keywords": keywords,
+                "match_mode": match_mode,
+                "case_sensitive": case_sensitive,
+                "min_occurrences": min_occurrences,
+            })
+
         # Search for text
         search_results = {}
         for keyword in keywords:
@@ -43,6 +58,16 @@ class TextChecker(BaseChecker):
                 keyword, case_sensitive=case_sensitive
             )
             search_results[keyword] = locations or []
+
+        # Save search results to artifacts
+        if self.artifacts:
+            self.artifacts.save_check_detail({
+                "search_results": {
+                    k: [{"location": b.location, "content": str(b.content)[:100]}
+                        for b in v]
+                    for k, v in search_results.items()
+                }
+            })
 
         # Determine status based on match_mode
         status, message, location, suggestion, example = self._evaluate_results(

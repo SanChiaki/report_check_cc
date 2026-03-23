@@ -1,9 +1,13 @@
 import json
 import logging
 import time
+from typing import TYPE_CHECKING
 
 from report_check.checkers.base import BaseChecker, CheckResult
 from report_check.storage.cache import ResultCache
+
+if TYPE_CHECKING:
+    from report_check.storage.artifacts import CheckArtifact
 
 logger = logging.getLogger(__name__)
 
@@ -11,8 +15,8 @@ logger = logging.getLogger(__name__)
 class ImageChecker(BaseChecker):
     """Check images in the report using multimodal AI."""
 
-    def __init__(self, report_data, model_manager):
-        super().__init__(report_data, model_manager)
+    def __init__(self, report_data, model_manager, artifacts: "CheckArtifact | None" = None):
+        super().__init__(report_data, model_manager, artifacts=artifacts)
         self.cache = ResultCache()
 
     async def check(self, rule_config: dict) -> CheckResult:
@@ -22,6 +26,16 @@ class ImageChecker(BaseChecker):
         image_filter = rule_config.get("image_filter", {})
 
         images = self._get_images(image_filter)
+
+        # Save check detail
+        if self.artifacts:
+            self.artifacts.save_check_detail({
+                "requirement": requirement,
+                "min_match": min_match,
+                "image_filter": image_filter,
+                "total_images": len(self.report_data.images),
+                "filtered_images": len(images),
+            })
 
         if not images:
             return CheckResult(
@@ -34,6 +48,14 @@ class ImageChecker(BaseChecker):
 
         matched = []
         for img in images:
+            # Save image to artifacts for review
+            if self.artifacts:
+                self.artifacts.add_image_evidence(
+                    f"checked_{img.id}",
+                    img.data,
+                    getattr(img, 'format', 'png')
+                )
+
             cache_key = self.cache.get_cache_key(img.data, requirement)
             cached = self.cache.get(cache_key)
 
@@ -102,9 +124,18 @@ class ImageChecker(BaseChecker):
 }}"""
 
         try:
-            response = await self.model_manager.call_multimodal_model(
-                prompt, img.data, image_format=getattr(img, 'format', 'png')
-            )
+            # Use artifact-recording wrapper if available
+            if self.artifacts:
+                response = await self.call_multimodal_model_with_artifact(
+                    prompt, img.data,
+                    purpose=f"check_image_{img.id}",
+                    image_format=getattr(img, 'format', 'png')
+                )
+            else:
+                response = await self.model_manager.call_multimodal_model(
+                    prompt, img.data, image_format=getattr(img, 'format', 'png')
+                )
+
             text = response.strip()
             if "```json" in text:
                 text = text.split("```json")[1].split("```")[0].strip()

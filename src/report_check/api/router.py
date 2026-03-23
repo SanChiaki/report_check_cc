@@ -1,9 +1,13 @@
 import json
 import uuid
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 from typing import Optional
+import zipfile
+import io
 
 from report_check.api.schemas import (
     CheckResultItem,
@@ -196,3 +200,126 @@ async def get_template(request: Request, template_id: int):
     if not template:
         raise HTTPException(status_code=404, detail="模板不存在")
     return template
+
+
+@router.get("/tasks/{task_id}/artifacts")
+async def list_task_artifacts(request: Request, task_id: str):
+    """List all artifacts for a task."""
+    # Check if task exists
+    task = await request.app.state.db.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+
+    # Check if artifacts manager is available
+    if not hasattr(request.app.state, "artifacts_manager") or not request.app.state.artifacts_manager:
+        raise HTTPException(status_code=404, detail="Artifacts 未启用")
+
+    artifacts_path = request.app.state.artifacts_manager.base_path / task_id
+    if not artifacts_path.exists():
+        return {"task_id": task_id, "artifacts": []}
+
+    def scan_directory(path: Path, rel_path: str = "") -> list:
+        """Recursively scan directory and return file list."""
+        items = []
+        try:
+            for item in sorted(path.iterdir()):
+                item_rel = f"{rel_path}/{item.name}" if rel_path else item.name
+                if item.is_dir():
+                    items.append({
+                        "name": item.name,
+                        "type": "directory",
+                        "path": item_rel,
+                        "children": scan_directory(item, item_rel)
+                    })
+                else:
+                    items.append({
+                        "name": item.name,
+                        "type": "file",
+                        "path": item_rel,
+                        "size": item.stat().st_size,
+                    })
+        except Exception as e:
+            logger.warning(f"Failed to scan directory {path}: {e}")
+        return items
+
+    return {
+        "task_id": task_id,
+        "artifacts": scan_directory(artifacts_path)
+    }
+
+
+@router.get("/tasks/{task_id}/artifacts/download")
+async def download_task_artifacts(request: Request, task_id: str):
+    """Download all artifacts for a task as a zip file."""
+    # Check if task exists
+    task = await request.app.state.db.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+
+    # Check if artifacts manager is available
+    if not hasattr(request.app.state, "artifacts_manager") or not request.app.state.artifacts_manager:
+        raise HTTPException(status_code=404, detail="Artifacts 未启用")
+
+    artifacts_path = request.app.state.artifacts_manager.base_path / task_id
+    if not artifacts_path.exists():
+        raise HTTPException(status_code=404, detail="该任务没有 artifacts")
+
+    # Create zip file in memory
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for file_path in artifacts_path.rglob("*"):
+            if file_path.is_file():
+                arcname = str(file_path.relative_to(artifacts_path))
+                zip_file.write(file_path, arcname)
+
+    zip_buffer.seek(0)
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={task_id}_artifacts.zip"}
+    )
+
+
+@router.get("/tasks/{task_id}/artifacts/{file_path:path}")
+async def get_task_artifact(request: Request, task_id: str, file_path: str):
+    """Get a specific artifact file."""
+    # Check if task exists
+    task = await request.app.state.db.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+
+    # Check if artifacts manager is available
+    if not hasattr(request.app.state, "artifacts_manager") or not request.app.state.artifacts_manager:
+        raise HTTPException(status_code=404, detail="Artifacts 未启用")
+
+    artifacts_path = request.app.state.artifacts_manager.base_path / task_id
+    file_full_path = artifacts_path / file_path
+
+    # Security check: ensure the file is within the task's artifacts directory
+    try:
+        file_full_path.resolve().relative_to(artifacts_path.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="访问被拒绝")
+
+    if not file_full_path.exists():
+        raise HTTPException(status_code=404, detail="文件不存在")
+
+    if file_full_path.is_dir():
+        raise HTTPException(status_code=400, detail="路径是目录，请使用 list 接口")
+
+    # Determine content type
+    content_type = "application/octet-stream"
+    if file_path.endswith(".json"):
+        content_type = "application/json"
+    elif file_path.endswith(".txt"):
+        content_type = "text/plain"
+    elif file_path.endswith(".png"):
+        content_type = "image/png"
+    elif file_path.endswith(".jpg") or file_path.endswith(".jpeg"):
+        content_type = "image/jpeg"
+    elif file_path.endswith(".xlsx"):
+        content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    elif file_path.endswith(".pdf"):
+        content_type = "application/pdf"
+
+    return FileResponse(file_full_path, media_type=content_type, filename=file_full_path.name)

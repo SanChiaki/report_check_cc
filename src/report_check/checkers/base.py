@@ -1,9 +1,12 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 import json
 import asyncio
 import logging
+
+if TYPE_CHECKING:
+    from report_check.storage.artifacts import CheckArtifact
 
 logger = logging.getLogger(__name__)
 
@@ -26,15 +29,17 @@ class CheckResult:
 class BaseChecker(ABC):
     """Abstract base class for all checkers."""
 
-    def __init__(self, report_data, model_manager):
+    def __init__(self, report_data, model_manager, artifacts: "CheckArtifact | None" = None):
         """Initialize checker with report data and model manager.
 
         Args:
             report_data: ReportData instance
             model_manager: ModelManager instance
+            artifacts: Optional CheckArtifact instance for recording execution details
         """
         self.report_data = report_data
         self.model_manager = model_manager
+        self.artifacts = artifacts
 
     @abstractmethod
     def check(self, rule_config) -> CheckResult:
@@ -106,8 +111,30 @@ class BaseChecker(ABC):
         for attempt in range(max_retries):
             try:
                 response = await self.model_manager.call_text_model(prompt)
-                return self._parse_location_response(response)
+                result = self._parse_location_response(response)
+
+                # Save location attempt to artifacts
+                if self.artifacts:
+                    self.artifacts.save_location_attempt(
+                        description=description,
+                        prompt=prompt,
+                        response=response,
+                        result={"locations": result} if result else None,
+                        error=None if result else "Parse failed or not found"
+                    )
+
+                return result
             except Exception as e:
+                # Save failed attempt to artifacts
+                if self.artifacts:
+                    self.artifacts.save_location_attempt(
+                        description=description,
+                        prompt=prompt,
+                        response="",
+                        result=None,
+                        error=f"Attempt {attempt + 1}/{max_retries}: {str(e)}"
+                    )
+
                 if attempt == max_retries - 1:
                     logger.error(f"Failed to locate content after {max_retries} attempts: {e}")
                     return None
@@ -144,3 +171,72 @@ class BaseChecker(ABC):
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             logger.error(f"Failed to parse location response: {e}")
             return None
+
+    async def call_text_model_with_artifact(self, prompt: str, purpose: str, **kwargs) -> str:
+        """调用文本模型并记录到 artifacts
+
+        Args:
+            prompt: 提示词
+            purpose: 调用目的描述，如 "locate_content", "semantic_check"
+            **kwargs: 传递给 model_manager 的参数
+
+        Returns:
+            模型响应文本
+        """
+        import time
+        start = time.time()
+        error = None
+        response = None
+
+        try:
+            response = await self.model_manager.call_text_model(prompt, **kwargs)
+            return response
+        except Exception as e:
+            error = str(e)
+            raise
+        finally:
+            if self.artifacts:
+                duration = (time.time() - start) * 1000
+                self.artifacts.task.save_ai_call(
+                    call_type="text",
+                    purpose=purpose,
+                    request={"prompt": prompt, "model": getattr(self.model_manager, 'text_model', 'unknown')},
+                    response=response,
+                    duration_ms=duration,
+                    error=error,
+                )
+
+    async def call_multimodal_model_with_artifact(self, prompt: str, image: bytes, purpose: str, **kwargs) -> str:
+        """调用多模态模型并记录到 artifacts
+
+        Args:
+            prompt: 提示词
+            image: 图片数据
+            purpose: 调用目的描述，如 "image_check"
+            **kwargs: 传递给 model_manager 的参数
+
+        Returns:
+            模型响应文本
+        """
+        import time
+        start = time.time()
+        error = None
+        response = None
+
+        try:
+            response = await self.model_manager.call_multimodal_model(prompt, image, **kwargs)
+            return response
+        except Exception as e:
+            error = str(e)
+            raise
+        finally:
+            if self.artifacts:
+                duration = (time.time() - start) * 1000
+                self.artifacts.task.save_ai_call(
+                    call_type="multimodal",
+                    purpose=purpose,
+                    request={"prompt": prompt, "model": getattr(self.model_manager, 'multimodal_model', 'unknown')},
+                    response=response,
+                    duration_ms=duration,
+                    error=error,
+                )

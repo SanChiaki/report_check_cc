@@ -82,6 +82,21 @@ npm run build                              # 构建生产版本到 dist/
    - API 熔断器：同一 API 连续失败 3 次后跳过后续调用
    - AI 调用重试：locate_content 方法最多重试 3 次
 
+7. **过程文件管理 (Artifacts)**
+   - `ArtifactsManager` (storage/artifacts.py): 管理任务过程文件的保存和查询
+   - 每个任务拥有独立文件夹：`data/tasks/{task_id}/`
+   - 目录结构：
+     - `0_upload/`: 原始上传文件
+     - `1_parsed/`: 解析后的数据（包括提取的图片和页面）
+     - `2_rules/`: 规则配置（用户规则、合并后规则、解析后规则）
+     - `3_checks/`: 每个检查规则的详细执行记录
+     - `4_ai_calls/`: AI 调用的请求和响应记录
+     - `5_result/`: 最终结果
+   - API 接口：
+     - `GET /api/v1/tasks/{task_id}/artifacts` - 列出任务的所有过程文件
+     - `GET /api/v1/tasks/{task_id}/artifacts/download` - 下载所有过程文件为 zip
+     - `GET /api/v1/tasks/{task_id}/artifacts/{file_path}` - 获取单个文件
+
 ### 数据流
 
 ```
