@@ -559,6 +559,8 @@ async def _process_task(self, task_id: str):
 | `checkers/text.py` | `search_text()` 返回 `ContentBlock`，访问 `.content` 而非 `.value` |
 | `checkers/semantic.py` | `_get_region_text()` 中 `openpyxl.utils.cell.range_boundaries` 仅适用于 Excel。需根据 `source_type` 分发：Excel 用原逻辑解析 `cell_range`，PDF 从 `ref_range`（如 `"P3.B1:P3.B5"`）中提取页码 `start_pos`/`end_pos` 并调用 `get_region()` |
 | `checkers/image.py` | `_get_images()` 中 `c.value` → `c.content`，`img.nearby_cells` → `img.nearby_blocks` |
+| `checkers/api_check.py` | 同 `semantic.py`，`_extract_content` 中有 `range_boundaries` 调用，需按 `source_type` 分发 |
+| `checkers/external.py` | 同 `semantic.py`，`_get_report_content` 中有 `range_boundaries` 调用，需按 `source_type` 分发 |
 | `checkers/base.py` | `locate_content` prompt 中引用的字段名更新 |
 
 **SemanticChecker 的 PDF ref_range 解析：**
@@ -621,6 +623,8 @@ dependencies = [
 | `checkers/text.py` | 字段名更新（`cell.value` → `block.content`） |
 | `checkers/semantic.py` | `_get_region_text` 按 source_type 分发解析逻辑 |
 | `checkers/image.py` | `nearby_cells` → `nearby_blocks`，`c.value` → `c.content` |
+| `checkers/api_check.py` | `_extract_content` 按 source_type 分发（同 semantic.py 模式） |
+| `checkers/external.py` | `_get_report_content` 按 source_type 分发（同 semantic.py 模式） |
 | `api/router.py` | 文件类型验证放宽（.pdf 扩展名 + %PDF magic bytes） |
 | `worker/worker.py` | `BaseParser.for_file()` + PDF 错误处理 |
 | `pyproject.toml` | 新增 `pdfplumber` 依赖 |
@@ -705,7 +709,7 @@ dependencies = [
 本设计通过引入 `BaseParser` 抽象和通用化的 `ContentBlock` 数据模型，实现了 PDF 报告检查功能，同时保持了架构的清晰性和扩展性。所有现有 Checker 无需修改即可支持 PDF，验证了设计的合理性。
 
 **核心优势：**
-- 最小化代码改动（13 个文件，其中 3 个新增）
+- 最小化代码改动（15 个文件，其中 3 个新增）
 - 完全复用现有 Checker 逻辑（字段重命名需适配，但检查逻辑不变）
 - 为未来扩展（Word、PPT）奠定基础
 - 保持了系统的简洁性和可维护性
