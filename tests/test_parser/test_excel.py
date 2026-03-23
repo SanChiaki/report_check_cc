@@ -1,6 +1,6 @@
 from pathlib import Path
 from report_check.parser.excel import ExcelParser
-from report_check.parser.models import ReportData, CellData, ImageData
+from report_check.parser.models import ReportData, ContentBlock, ImageData
 
 
 class TestExcelParser:
@@ -8,11 +8,11 @@ class TestExcelParser:
         parser = ExcelParser()
         report = parser.parse(str(sample_excel_path))
         assert isinstance(report, ReportData)
-        assert report.sheet_name == "报告"
-        assert len(report.cells) > 0
-        a1_cells = [c for c in report.cells if c.cell_ref == "A1"]
-        assert len(a1_cells) == 1
-        assert a1_cells[0].value == "交付报告"
+        assert report.metadata["sheet_name"] == "报告"
+        assert len(report.content_blocks) > 0
+        a1_blocks = [b for b in report.content_blocks if b.location == "A1"]
+        assert len(a1_blocks) == 1
+        assert a1_blocks[0].content == "交付报告"
 
     def test_parse_extracts_images(self, sample_excel_path: Path):
         parser = ExcelParser()
@@ -27,13 +27,13 @@ class TestExcelParser:
         parser = ExcelParser()
         report = parser.parse(str(sample_excel_path))
         img = report.images[0]
-        assert len(img.nearby_cells) > 0
+        assert len(img.nearby_blocks) > 0
 
     def test_parse_no_images(self, sample_excel_no_images: Path):
         parser = ExcelParser()
         report = parser.parse(str(sample_excel_no_images))
         assert len(report.images) == 0
-        assert len(report.cells) > 0
+        assert len(report.content_blocks) > 0
 
     def test_parse_metadata(self, sample_excel_path: Path):
         parser = ExcelParser()
@@ -49,7 +49,7 @@ class TestReportDataSearch:
         report = parser.parse(str(sample_excel_path))
         results = report.search_text("交付内容")
         assert len(results) >= 1
-        assert any(c.value == "交付内容" for c in results)
+        assert any(b.content == "交付内容" for b in results)
 
     def test_search_text_not_found(self, sample_excel_path: Path):
         parser = ExcelParser()

@@ -1,0 +1,114 @@
+{
+  "rules": [
+    {
+      "id": "r1",
+      "name": "检查交付内容是否存在",
+      "type": "text",
+      "enabled": true,
+      "config": {
+        "keywords": ["交付内容"],
+        "match_mode": "any",
+        "case_sensitive": false,
+        "min_occurrences": 1
+      }
+    },
+    {
+      "id": "r2",
+      "name": "检查信号塔安装完毕照片",
+      "type": "image",
+      "enabled": true,
+      "config": {
+        "requirement": "图片中显示信号塔已经安装完毕",
+        "min_match_count": 1,
+        "image_filter": {
+          "use_nearby_text": true,
+          "keywords": ["信号塔", "安装", "完毕"]
+        }
+      }
+    },
+    {
+      "id": "r3",
+      "name": "验证设备清单一致性",
+      "type": "external_data",
+      "enabled": true,
+      "config": {
+        "extract": {
+          "description": "报告中的设备列表或设备清单",
+          "context_hint": "查找包含设备名称、型号或序列号的区域"
+        },
+        "external_api": {
+          "endpoint": "http://localhost:8001/devices/list",
+          "method": "GET",
+          "headers": {},
+          "params": {},
+          "response_path": "data.devices"
+        },
+        "analysis": {
+          "requirement": "报告中提到的所有设备都必须包含在外部设备清单中"
+        }
+      }
+    },
+    {
+      "id": "r4",
+      "name": "签名鉴定验证",
+      "type": "api",
+      "enabled": true,
+      "config": {
+        "extract": {
+          "type": "image",
+          "description": "签名图片或签字区域",
+          "context_hint": "查找包含签名、签字、确认人等文字附近的图片",
+          "fallback": "last_image"
+        },
+        "api": {
+          "endpoint": "http://localhost:8001/signature/verify",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "image": "${extracted_content}",
+            "type": "signature"
+          },
+          "timeout": 15
+        },
+        "validation": {
+          "success_field": "verified",
+          "success_value": "true",
+          "operator": "eq",
+          "error_message": "签名鉴定未通过"
+        }
+      }
+    },
+    {
+      "id": "r5",
+      "name": "客户邮箱鉴定验证",
+      "type": "api",
+      "enabled": true,
+      "config": {
+        "extract": {
+          "type": "text",
+          "description": "客户邮箱地址",
+          "context_hint": "查找包含邮箱、email、联系方式等文字附近的内容"
+        },
+        "api": {
+          "endpoint": "http://localhost:8001/email/verify",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "email": "${extracted_content}"
+          },
+          "timeout": 10
+        },
+        "validation": {
+          "success_field": "valid",
+          "success_value": "true",
+          "operator": "eq",
+          "error_message": "邮箱鉴定未通过"
+        }
+      }
+    }
+  ]
+}

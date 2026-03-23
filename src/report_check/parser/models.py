@@ -1,14 +1,14 @@
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass
-class CellData:
-    row: int
-    col: int
-    value: Any
-    cell_ref: str
-    data_type: str
+class ContentBlock:
+    """通用内容块，支持 Excel 单元格和 PDF 文本块"""
+    content: Any
+    location: str
+    content_type: Literal["text", "number", "date", "image"]
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -17,32 +17,30 @@ class ImageData:
     data: bytes
     format: str
     anchor: dict
-    nearby_cells: list[CellData] = field(default_factory=list)
+    nearby_blocks: list[ContentBlock] = field(default_factory=list)
 
 
 @dataclass
 class ReportData:
     file_name: str
-    sheet_name: str
-    cells: list[CellData]
+    source_type: Literal["excel", "pdf"]
+    content_blocks: list[ContentBlock]
     images: list[ImageData]
     metadata: dict[str, Any]
 
-    def search_text(self, keyword: str, case_sensitive: bool = False) -> list[CellData]:
+    def search_text(self, keyword: str, case_sensitive: bool = False) -> list[ContentBlock]:
         results = []
-        for cell in self.cells:
-            value = str(cell.value)
-            if not case_sensitive:
-                if keyword.lower() in value.lower():
-                    results.append(cell)
-            else:
-                if keyword in value:
-                    results.append(cell)
+        for block in self.content_blocks:
+            if block.content_type in ("text", "number", "date"):
+                value = str(block.content)
+                if not case_sensitive:
+                    if keyword.lower() in value.lower():
+                        results.append(block)
+                else:
+                    if keyword in value:
+                        results.append(block)
         return results
 
-    def get_cells_in_range(self, start_row: int, end_row: int,
-                           start_col: int, end_col: int) -> list[CellData]:
-        return [
-            c for c in self.cells
-            if start_row <= c.row <= end_row and start_col <= c.col <= end_col
-        ]
+    def get_blocks_by_location(self, location_pattern: str) -> list[ContentBlock]:
+        """根据位置模式筛选内容块（支持 Excel 范围或 PDF 页码）"""
+        return [b for b in self.content_blocks if location_pattern in b.location]

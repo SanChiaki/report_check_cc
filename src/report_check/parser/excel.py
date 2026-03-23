@@ -4,7 +4,7 @@ from pathlib import Path
 import openpyxl
 from openpyxl.utils import get_column_letter
 from PIL import Image
-from report_check.parser.models import CellData, ImageData, ReportData
+from report_check.parser.models import ContentBlock, ImageData, ReportData
 
 logger = logging.getLogger(__name__)
 NEARBY_RADIUS = 3
@@ -15,29 +15,32 @@ class ExcelParser:
     def parse(self, file_path: str) -> ReportData:
         wb = openpyxl.load_workbook(file_path, data_only=True)
         ws = wb.active
-        cells = self._extract_cells(ws)
-        images = self._extract_images(ws)
+        content_blocks = self._extract_cells(ws)
+        images = self._extract_images(ws, content_blocks)
         return ReportData(
             file_name=Path(file_path).name,
-            sheet_name=ws.title,
-            cells=cells,
+            source_type="excel",
+            content_blocks=content_blocks,
             images=images,
-            metadata={"row_count": ws.max_row or 0, "col_count": ws.max_column or 0},
+            metadata={"sheet_name": ws.title, "row_count": ws.max_row or 0, "col_count": ws.max_column or 0},
         )
 
-    def _extract_cells(self, ws) -> list[CellData]:
-        cells = []
+    def _extract_cells(self, ws) -> list[ContentBlock]:
+        blocks = []
         for row in ws.iter_rows():
             for cell in row:
                 if cell.value is not None:
-                    cells.append(CellData(
-                        row=cell.row, col=cell.column,
-                        value=str(cell.value), cell_ref=cell.coordinate,
-                        data_type=cell.data_type or "s",
+                    data_type = cell.data_type or "s"
+                    content_type = "number" if data_type == "n" else "date" if data_type == "d" else "text"
+                    blocks.append(ContentBlock(
+                        content=str(cell.value),
+                        location=cell.coordinate,
+                        content_type=content_type,
+                        metadata={"row": cell.row, "col": cell.column, "excel_type": data_type},
                     ))
-        return cells
+        return blocks
 
-    def _extract_images(self, ws) -> list[ImageData]:
+    def _extract_images(self, ws, content_blocks: list[ContentBlock]) -> list[ImageData]:
         images = []
         for i, img in enumerate(ws._images):
             try:
@@ -48,11 +51,11 @@ class ExcelParser:
                 if fmt is None:
                     continue
                 anchor = self._get_anchor(img)
-                nearby = self._get_nearby_cells(ws, anchor.get("row", 1), anchor.get("col", 1))
+                nearby = self._get_nearby_blocks(content_blocks, anchor.get("row", 1), anchor.get("col", 1))
                 images.append(ImageData(
                     id=f"img_{i}",
                     data=image_data if fmt[1] is None else fmt[1],
-                    format=fmt[0], anchor=anchor, nearby_cells=nearby,
+                    format=fmt[0], anchor=anchor, nearby_blocks=nearby,
                 ))
             except Exception as e:
                 logger.warning(f"Failed to extract image {i}: {e}")
@@ -104,14 +107,12 @@ class ExcelParser:
             anchor = {"row": 1, "col": 1, "cell_ref": "A1"}
         return anchor
 
-    def _get_nearby_cells(self, ws, row: int, col: int) -> list[CellData]:
+    def _get_nearby_blocks(self, content_blocks: list[ContentBlock], row: int, col: int) -> list[ContentBlock]:
         nearby = []
-        for r in range(max(1, row - NEARBY_RADIUS), min((ws.max_row or 1) + 1, row + NEARBY_RADIUS + 1)):
-            for c in range(max(1, col - NEARBY_RADIUS), min((ws.max_column or 1) + 1, col + NEARBY_RADIUS + 1)):
-                cell = ws.cell(r, c)
-                if cell.value is not None:
-                    nearby.append(CellData(
-                        row=r, col=c, value=str(cell.value),
-                        cell_ref=cell.coordinate, data_type=cell.data_type or "s",
-                    ))
+        for block in content_blocks:
+            block_row = block.metadata.get("row", 0)
+            block_col = block.metadata.get("col", 0)
+            if (abs(block_row - row) <= NEARBY_RADIUS and
+                abs(block_col - col) <= NEARBY_RADIUS):
+                nearby.append(block)
         return nearby
