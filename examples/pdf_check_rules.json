@@ -1,0 +1,76 @@
+{
+  "rules": [
+    {
+      "id": "pdf_text_001",
+      "name": "检查报告标题",
+      "type": "text",
+      "enabled": true,
+      "config": {
+        "keywords": ["电信", "进度报告"],
+        "match_mode": "all",
+        "case_sensitive": false,
+        "min_occurrences": 1
+      }
+    },
+    {
+      "id": "pdf_semantic_001",
+      "name": "验证项目进度数据",
+      "type": "semantic",
+      "enabled": true,
+      "config": {
+        "content_description": "找到项目完成百分比相关的数字",
+        "expected_value": "大于 50%",
+        "check_prompt": "请判断找到的进度数据是否大于 50%，返回 JSON 格式：{\"passed\": true/false, \"reason\": \"原因\"}"
+      }
+    },
+    {
+      "id": "pdf_image_001",
+      "name": "检查是否包含图表",
+      "type": "image",
+      "enabled": true,
+      "config": {
+        "requirement": "图片中包含柱状图或折线图等数据可视化图表",
+        "image_filter": {
+          "keywords": []
+        }
+      }
+    },
+    {
+      "id": "pdf_api_001",
+      "name": "验证项目编号格式",
+      "type": "api",
+      "enabled": true,
+      "config": {
+        "content_description": "找到项目编号",
+        "api_url": "https://httpbin.org/post",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "project_id": "${content}"
+        },
+        "response_path": "json.project_id",
+        "validation": {
+          "operator": "contains",
+          "expected": "PROJ"
+        }
+      }
+    },
+    {
+      "id": "pdf_external_001",
+      "name": "外部数据一致性检查",
+      "type": "external_data",
+      "enabled": true,
+      "config": {
+        "content_description": "找到报告中的项目名称",
+        "external_data_source": {
+          "type": "api",
+          "url": "https://httpbin.org/get",
+          "method": "GET"
+        },
+        "comparison_prompt": "请比较报告中的项目名称和外部数据是否一致，返回 JSON：{\"passed\": true/false, \"reason\": \"原因\"}"
+      }
+    }
+  ]
+}

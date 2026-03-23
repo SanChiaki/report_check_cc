@@ -1,0 +1,39 @@
+{
+  "rules": [
+    {
+      "id": "simple_text_001",
+      "name": "检查关键词：电信",
+      "type": "text",
+      "enabled": true,
+      "config": {
+        "keywords": ["电信"],
+        "match_mode": "any",
+        "case_sensitive": false,
+        "min_occurrences": 1
+      }
+    },
+    {
+      "id": "simple_text_002",
+      "name": "检查关键词：项目和进度",
+      "type": "text",
+      "enabled": true,
+      "config": {
+        "keywords": ["项目", "进度"],
+        "match_mode": "all",
+        "case_sensitive": false,
+        "min_occurrences": 1
+      }
+    },
+    {
+      "id": "simple_semantic_001",
+      "name": "验证完成进度",
+      "type": "semantic",
+      "enabled": true,
+      "config": {
+        "content_description": "找到项目完成进度的百分比数字",
+        "expected_value": "75%",
+        "check_prompt": "请判断找到的进度数据是否为 75%，返回 JSON 格式：{\"passed\": true/false, \"reason\": \"原因\"}"
+      }
+    }
+  ]
+}
