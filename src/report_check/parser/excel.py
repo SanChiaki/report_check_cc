@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 import openpyxl
 from openpyxl.utils import get_column_letter
+from report_check.parser.base import BaseParser
 from report_check.parser.models import ContentBlock, ImageData, ReportData
 from report_check.parser.utils import detect_and_convert_format
 
@@ -9,7 +10,7 @@ logger = logging.getLogger(__name__)
 NEARBY_RADIUS = 3
 
 
-class ExcelParser:
+class ExcelParser(BaseParser):
     def parse(self, file_path: str) -> ReportData:
         wb = openpyxl.load_workbook(file_path, data_only=True)
         ws = wb.active
