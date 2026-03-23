@@ -8,6 +8,7 @@ from report_check.engine.rule_engine import RuleEngine
 from report_check.engine.variable_resolver import VariableResolver
 from report_check.models.manager import ModelManager
 from report_check.parser.excel import ExcelParser
+from report_check.parser.pdf import PDFParser
 from report_check.storage.database import Database, TaskStatus
 from report_check.worker.queue import TaskQueue
 
@@ -79,10 +80,14 @@ class BackgroundWorker:
         try:
             await self.db.update_task_status(task_id, TaskStatus.PROCESSING)
 
-            # Step 1: Parse Excel
+            # Step 1: Parse file (Excel or PDF)
             await self.db.update_task_progress(task_id, 10)
-            parser = ExcelParser()
-            report_data = parser.parse(task["file_path"])
+            file_path = task["file_path"]
+            if file_path.endswith(".pdf"):
+                parser = PDFParser()
+            else:
+                parser = ExcelParser()
+            report_data = parser.parse(file_path)
 
             # Step 2: Load rules and resolve variables
             await self.db.update_task_progress(task_id, 20)

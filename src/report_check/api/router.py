@@ -26,6 +26,7 @@ router = APIRouter(prefix="/api/v1")
 limiter = Limiter(key_func=get_remote_address)
 
 EXCEL_MAGIC = b"PK"
+PDF_MAGIC = b"%PDF"
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
 
 
@@ -48,8 +49,8 @@ async def submit_check(
     context_vars: Optional[str] = Form(None),
 ):
     # Validate file extension
-    if not file.filename or not file.filename.endswith((".xlsx", ".xls")):
-        raise HTTPException(status_code=400, detail="仅支持 .xlsx 或 .xls 文件")
+    if not file.filename or not file.filename.endswith((".xlsx", ".xls", ".pdf")):
+        raise HTTPException(status_code=400, detail="仅支持 .xlsx、.xls 或 .pdf 文件")
 
     # Read file
     file_data = await file.read()
@@ -59,7 +60,9 @@ async def submit_check(
         raise HTTPException(status_code=400, detail="文件大小超过 20MB 限制")
 
     # Validate magic bytes
-    if not file_data[:2] == EXCEL_MAGIC:
+    is_excel = file_data[:2] == EXCEL_MAGIC
+    is_pdf = file_data[:4] == PDF_MAGIC
+    if not (is_excel or is_pdf):
         raise HTTPException(status_code=400, detail="文件格式不合法")
 
     # Parse rules
