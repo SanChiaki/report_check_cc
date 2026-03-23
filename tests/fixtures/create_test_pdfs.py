@@ -45,13 +45,43 @@ def create_normal_pdf():
         page.insert_text((50, y), line, fontsize=11, fontname="helv")
         y += 20
 
-    # 添加一个矩形表示图片区域
+    # 添加现场照片（真实的图片，不是矩形框）
     y += 20
     page.insert_text((50, y), "现场照片:", fontsize=12, fontname="helv")
     y += 25
-    rect = fitz.Rect(50, y, 300, y + 150)
-    page.draw_rect(rect, color=(0.5, 0.5, 0.5), width=1)
-    page.insert_text((120, y + 70), "[设备安装照片]", fontsize=10)
+
+    # 创建一个模拟的设备安装现场照片
+    img = Image.new('RGB', (500, 300), color='#f5f5f0')  # 浅灰背景
+    draw = ImageDraw.Draw(img)
+
+    # 绘制基站塔架
+    # 塔身
+    draw.rectangle([240, 50, 260, 250], fill='#666666', outline='#444444', width=2)
+    # 天线（三个扇区）
+    for i, angle in enumerate([-30, 0, 30]):
+        x_offset = (i - 1) * 40
+        draw.rectangle([220 + x_offset, 80, 280 + x_offset, 100],
+                      fill='#228b22', outline='#1a6b1a', width=1)
+    # 地面设备箱
+    draw.rectangle([100, 200, 200, 280], fill='#4169e1', outline='#27408b', width=2)
+    draw.text((120, 230), "设备箱", fill='white')
+    # 标识牌
+    draw.rectangle([350, 220, 450, 260], fill='white', outline='black', width=2)
+    draw.text((360, 235), "5G基站 #3", fill='black')
+    # 添加噪点模拟真实照片
+    import random
+    for _ in range(500):
+        x = random.randint(0, img.width - 1)
+        y = random.randint(0, img.height - 1)
+        draw.point((x, y), fill=(230, 230, 230))
+
+    img_buffer = io.BytesIO()
+    img.save(img_buffer, format='PNG')
+    img_buffer.seek(0)
+
+    rect = fitz.Rect(50, y, 350, y + 210)
+    page.insert_image(rect, stream=img_buffer.getvalue())
+    page.insert_text((50, y + 220), "图1: 南城区3号基站设备安装现场", fontsize=10)
 
     doc.save(str(pdf_path))
     doc.close()
