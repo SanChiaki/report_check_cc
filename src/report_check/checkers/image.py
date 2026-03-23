@@ -103,7 +103,7 @@ class ImageChecker(BaseChecker):
 
         try:
             response = await self.model_manager.call_multimodal_model(
-                prompt, img.data
+                prompt, img.data, image_format=getattr(img, 'format', 'png')
             )
             text = response.strip()
             if "```json" in text:
