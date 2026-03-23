@@ -44,7 +44,7 @@ async def test_keyword_found(text_checker):
 
     result = text_checker.check(rule_config)
 
-    assert result.status == "pass"
+    assert result.status == "passed"
     assert result.rule_id == "test_001"
     assert result.rule_name == "Test Keyword Found"
     assert "服务器" in result.message
@@ -85,7 +85,7 @@ async def test_match_mode_all(text_checker):
 
     result = text_checker.check(rule_config)
 
-    assert result.status == "pass"
+    assert result.status == "passed"
     assert "All required keywords found" in result.message or "all" in result.message.lower()
 
 

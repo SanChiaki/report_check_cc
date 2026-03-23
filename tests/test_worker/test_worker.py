@@ -45,7 +45,7 @@ class TestBackgroundWorker:
 
         results = await db.get_check_results("t1")
         assert len(results) == 1
-        assert results[0]["status"] == "pass"
+        assert results[0]["status"] == "passed"
 
     @pytest.mark.asyncio
     async def test_process_task_invalid_file_fails(self, db, task_queue, tmp_path):

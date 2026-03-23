@@ -80,7 +80,7 @@ class ImageChecker(BaseChecker):
 
         filtered = []
         for img in all_images:
-            nearby_text = " ".join(str(c.value) for c in img.nearby_cells)
+            nearby_text = " ".join(str(b.content) for b in img.nearby_blocks)
             if any(kw in nearby_text for kw in keywords):
                 filtered.append(img)
 

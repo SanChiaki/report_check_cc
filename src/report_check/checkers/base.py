@@ -62,7 +62,30 @@ class BaseChecker(ABC):
         summarizer = ReportSummarizer()
         report_summary = summarizer.summarize(self.report_data)
 
-        prompt = f"""以下是 Excel 报告的内容摘要：
+        # 根据报告类型调整提示词
+        if self.report_data.source_type == "excel":
+            report_type = "Excel 报告"
+            location_format = """
+    {{
+      "sheet": "工作表名",
+      "cell": "A1",
+      "cell_range": "A1:B3",
+      "row": 1,
+      "column": 1,
+      "content": "找到的文本内容",
+      "context": "上下文说明"
+    }}"""
+        else:  # PDF
+            report_type = "PDF 报告"
+            location_format = """
+    {{
+      "page": 1,
+      "location": "page_1",
+      "content": "找到的文本内容",
+      "context": "上下文说明"
+    }}"""
+
+        prompt = f"""以下是 {report_type} 的内容摘要：
 
 {report_summary}
 
@@ -73,16 +96,7 @@ class BaseChecker(ABC):
 请以 JSON 格式回复，格式如下：
 {{
   "found": true/false,
-  "locations": [
-    {{
-      "sheet": "工作表名",
-      "cell": "A1",
-      "cell_range": "A1:B3",
-      "row": 1,
-      "column": 1,
-      "content": "找到的文本内容",
-      "context": "上下文说明"
-    }}
+  "locations": [{location_format}
   ]
 }}
 
