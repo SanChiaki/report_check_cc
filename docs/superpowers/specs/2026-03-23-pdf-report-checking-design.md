@@ -541,14 +541,54 @@ async def _process_task(self, task_id: str):
 | PDF 无嵌入图片 | `images` 返回空列表，不影响文本检查 |
 | 用户上传的 PDF 实际是图片 | magic bytes 验证会拦截（`%PDF` 不匹配） |
 
-### 7.2 Checker 兼容性验证
+### 7.2 Checker 和下游代码的字段重命名影响
 
-所有现有 Checker 无需修改即可工作：
+数据模型重命名（`CellData` → `ContentBlock`，`cells` → `blocks` 等）会影响所有引用这些字段的代码。以下是完整的需更新列表：
 
-- **TextChecker**: 调用 `report_data.search_text()`，遍历 `blocks`，返回 `ContentBlock` 对象，`location` 字段包含 `ref="P3.B5"`
-- **SemanticChecker**: 调用 `locate_content()`，AI 返回的 `locations` 中 `cell` 字段改为 `ref`，`cell_range` 可选
-- **ImageChecker**: 遍历 `report_data.images`，`nearby_blocks` 提供上下文
-- **ApiChecker / ExternalDataChecker**: 依赖 `locate_content()` 找到数据位置，然后提取 `content` 进行比对
+**ReportData 方法更新：**
+
+| 方法 | 需更新的字段引用 |
+|---|---|
+| `search_text()` | `self.cells` → `self.blocks`，`cell.value` → `block.content` |
+| `get_cells_in_range()` → `get_blocks_in_range()` | `self.cells` → `self.blocks`，`c.row` → `c.position`，`c.col` → `c.index` |
+
+**Checker 文件更新：**
+
+| 文件 | 更新内容 |
+|---|---|
+| `checkers/text.py` | `search_text()` 返回 `ContentBlock`，访问 `.content` 而非 `.value` |
+| `checkers/semantic.py` | `_get_region_text()` 中 `openpyxl.utils.cell.range_boundaries` 仅适用于 Excel。需根据 `source_type` 分发：Excel 用原逻辑解析 `cell_range`，PDF 从 `ref_range`（如 `"P3.B1:P3.B5"`）中提取页码 `start_pos`/`end_pos` 并调用 `get_region()` |
+| `checkers/image.py` | `_get_images()` 中 `c.value` → `c.content`，`img.nearby_cells` → `img.nearby_blocks` |
+| `checkers/base.py` | `locate_content` prompt 中引用的字段名更新 |
+
+**SemanticChecker 的 PDF ref_range 解析：**
+
+```python
+def _get_region_text(self, summarizer: ReportSummarizer, location: dict) -> str:
+    """根据 source_type 解析定位信息并提取区域文本"""
+    if self.report_data.source_type == "excel":
+        cell_range = location.get("cell_range", "") or location.get("cell", "")
+        try:
+            from openpyxl.utils.cell import range_boundaries
+            min_col, min_row, max_col, max_row = range_boundaries(cell_range)
+            return summarizer.get_region(self.report_data, min_row, max_row)
+        except Exception:
+            return summarizer.summarize(self.report_data)
+    else:  # PDF
+        ref_range = location.get("ref_range", "") or location.get("ref", "")
+        try:
+            # 解析 "P3.B1:P3.B5" 或 "P3.B5" 格式
+            parts = ref_range.split(":")
+            start_page = int(parts[0].split(".")[0].lstrip("P"))
+            end_page = int(parts[-1].split(".")[0].lstrip("P"))
+            return summarizer.get_region(self.report_data, start_page, end_page)
+        except (ValueError, IndexError):
+            return summarizer.summarize(self.report_data)
+```
+
+**_detect_and_convert_format 共享策略：**
+
+将 `_detect_and_convert_format` 提取为独立工具函数，放在 `parser/utils.py` 中，`ExcelParser` 和 `PDFParser` 共同引用，避免代码重复。
 
 ---
 
@@ -571,13 +611,17 @@ dependencies = [
 
 | 文件 | 修改内容 |
 |---|---|
-| `parser/models.py` | `CellData` → `ContentBlock`，`ReportData` 调整 |
+| `parser/models.py` | `CellData` → `ContentBlock`，`ReportData` 调整（字段重命名 + `source_type`） |
 | `parser/base.py` | **新增** `BaseParser` 抽象类 |
-| `parser/excel.py` | 继承 `BaseParser`，适配新数据模型 |
+| `parser/utils.py` | **新增** `_detect_and_convert_format` 共享工具函数 |
+| `parser/excel.py` | 继承 `BaseParser`，适配新数据模型，引用 `parser/utils.py` |
 | `parser/pdf.py` | **新增** `PDFParser` 实现 |
-| `parser/summarizer.py` | 新增 `_summarize_pdf` 方法，`get_region` 适配 |
-| `checkers/base.py` | `locate_content` prompt 适配 |
-| `api/router.py` | 文件类型验证放宽 |
+| `parser/summarizer.py` | 新增 `_summarize_pdf` 方法，`get_region` 适配，字段名更新 |
+| `checkers/base.py` | `locate_content` prompt 适配（按 source_type 生成不同 JSON 格式） |
+| `checkers/text.py` | 字段名更新（`cell.value` → `block.content`） |
+| `checkers/semantic.py` | `_get_region_text` 按 source_type 分发解析逻辑 |
+| `checkers/image.py` | `nearby_cells` → `nearby_blocks`，`c.value` → `c.content` |
+| `api/router.py` | 文件类型验证放宽（.pdf 扩展名 + %PDF magic bytes） |
 | `worker/worker.py` | `BaseParser.for_file()` + PDF 错误处理 |
 | `pyproject.toml` | 新增 `pdfplumber` 依赖 |
 
@@ -661,7 +705,7 @@ dependencies = [
 本设计通过引入 `BaseParser` 抽象和通用化的 `ContentBlock` 数据模型，实现了 PDF 报告检查功能，同时保持了架构的清晰性和扩展性。所有现有 Checker 无需修改即可支持 PDF，验证了设计的合理性。
 
 **核心优势：**
-- 最小化代码改动（仅 9 个文件）
-- 完全复用现有 Checker 逻辑
+- 最小化代码改动（13 个文件，其中 3 个新增）
+- 完全复用现有 Checker 逻辑（字段重命名需适配，但检查逻辑不变）
 - 为未来扩展（Word、PPT）奠定基础
 - 保持了系统的简洁性和可维护性
