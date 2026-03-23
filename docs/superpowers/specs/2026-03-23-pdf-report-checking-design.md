@@ -200,20 +200,38 @@ def _extract_blocks(self, doc) -> list[ContentBlock]:
     if not blocks:
         raise ValueError("PDF 中未提取到任何文本内容")
 
-    # 检测扫描件 PDF（文本层过少）
+    # 检测扫描件 PDF（文本层过少）- 自动切换到页面渲染模式
     avg_text_per_page = total_text_length / len(doc.pages) if doc.pages else 0
     if avg_text_per_page < 50:  # 平均每页少于 50 字符，可能是扫描件
-        logger.warning(f"PDF 可能是扫描件（平均每页 {avg_text_per_page:.1f} 字符）")
-        raise ValueError("PDF 可能是扫描件，需要 OCR 识别（当前不支持）")
+        logger.info(f"检测到扫描件 PDF（平均每页 {avg_text_per_page:.1f} 字符），切换到页面渲染模式")
+        return self._extract_blocks_from_rendered_pages(doc)
 
+    return blocks
+
+def _extract_blocks_from_rendered_pages(self, doc) -> list[ContentBlock]:
+    """扫描件 PDF 处理：将每页渲染为图片，创建页码占位符块
+
+    实际内容通过 _extract_images_from_rendered_pages 存入 images，
+    AI 通过多模态理解进行定位和检查。
+    """
+    blocks = []
+    for page_num in range(1, len(doc.pages) + 1):
+        # 为每页创建一个占位符块，标记这是渲染页
+        blocks.append(ContentBlock(
+            position=page_num,
+            index=1,
+            content=f"[第 {page_num} 页 - 扫描件，内容见图片]",
+            content_type="s",
+            ref=f"P{page_num}.RENDERED",
+        ))
     return blocks
 ```
 
-**效果验证标准：**
-当出现以下情况时，认为"效果不好"，需要升级为页面渲染方案：
-- 用户反馈定位准确率低于 70%（连续 10 个任务中有 3 个以上定位失败）
-- 复杂排版（多栏、表格）导致文本顺序混乱，AI 无法理解语义
-- 图表与文字关联错误（nearby_blocks 不相关）
+**扫描件处理策略（混合方案）：**
+- **有文本层的 PDF**：结构化文本提取（快速、低成本）
+- **扫描件 PDF**：自动切换到页面渲染模式（准确、覆盖全）
+- 检测标准：平均每页文本少于 50 字符
+- 渲染后的页面图片存入 `images`，AI 通过多模态理解进行定位
 
 **图片提取策略：**
 ```python
@@ -226,6 +244,12 @@ def _extract_images(self, doc, blocks: list[ContentBlock]) -> list[ImageData]:
     - 'name': 图片名称
     - 'stream': PIL.PdfImagePlugin.PdfImageFile 对象（需调用 .convert() 获取字节）
     """
+    # 检查是否为扫描件（通过 blocks 中的占位符判断）
+    is_scanned = any("RENDERED" in b.ref for b in blocks)
+    if is_scanned:
+        return self._extract_images_from_rendered_pages(doc)
+
+    # 正常 PDF：提取嵌入图片
     images = []
     for page_num, page in enumerate(doc.pages, start=1):
         try:
@@ -268,6 +292,47 @@ def _extract_images(self, doc, blocks: list[ContentBlock]) -> list[ImageData]:
 
     return images
 
+def _extract_images_from_rendered_pages(self, doc) -> list[ImageData]:
+    """扫描件 PDF：将每页渲染为高分辨率图片
+
+    使用 pymupdf (fitz) 渲染，比 pdf2image 更快且无需外部依赖。
+    渲染参数：
+    - DPI: 150（平衡质量和文件大小）
+    - 格式: PNG
+    - 颜色空间: RGB
+    """
+    import fitz  # PyMuPDF
+
+    images = []
+    pdf_doc = fitz.open(doc.stream.name if hasattr(doc.stream, 'name') else doc.stream)
+
+    for page_num in range(len(pdf_doc)):
+        try:
+            page = pdf_doc[page_num]
+            # 渲染为图片 (150 DPI)
+            mat = fitz.Matrix(150/72, 150/72)  # 72 DPI 是默认值
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+
+            # 转换为 PNG 字节
+            img_bytes = pix.tobytes("png")
+
+            # 获取同页占位符块作为 nearby_blocks
+            nearby = [b for b in blocks if b.position == page_num + 1]
+
+            images.append(ImageData(
+                id=f"rendered_p{page_num + 1}",
+                data=img_bytes,
+                format="png",
+                anchor={"page": page_num + 1, "cell_ref": f"P{page_num + 1}", "rendered": True},
+                nearby_blocks=nearby,
+            ))
+        except Exception as e:
+            logger.warning(f"第 {page_num + 1} 页渲染失败: {e}")
+            continue
+
+    pdf_doc.close()
+    return images
+
 def _detect_and_convert_format(self, data: bytes) -> tuple[str, bytes | None] | None:
     """复用 ExcelParser 的图片格式检测和转换逻辑"""
     # 与 ExcelParser._detect_and_convert_format 相同
@@ -275,11 +340,22 @@ def _detect_and_convert_format(self, data: bytes) -> tuple[str, bytes | None] | 
 
 ### 3.4 PDF 解析库选型
 
-选择 **pdfplumber** 而不是 pypdf / pymupdf：
-- 同时支持文本提取和图片提取，一个库搞定
-- 文本提取保留位置信息（坐标），方便未来升级为坐标定位
-- 纯 Python，无系统依赖，Docker 部署简单
-- 依赖包新增：`pdfplumber>=0.11.0`
+**主库：pdfplumber**
+- 文本提取和嵌入图片提取
+- 纯 Python，无系统依赖
+- 依赖包：`pdfplumber>=0.11.0`
+
+**渲染库：PyMuPDF (fitz)**
+- 用于扫描件 PDF 的页面渲染
+- 比 pdf2image 更快，无需外部依赖（Poppler）
+- 依赖包：`pymupdf>=1.23.0`
+- 注意：AGPL 许可证，商业使用需考虑
+
+**混合处理流程：**
+1. 尝试用 pdfplumber 提取文本
+2. 检测平均每页文本量
+3. 文本充足（≥50 字符/页）→ 结构化提取
+4. 文本不足（<50 字符/页）→ 自动切换到 PyMuPDF 渲染
 
 ---
 
@@ -535,11 +611,12 @@ async def _process_task(self, task_id: str):
 
 | 情况 | 处理策略 |
 |---|---|
-| PDF 全是扫描图片（无文本层） | `_extract_blocks` 返回空，抛出 `ValueError("PDF 中未提取到任何文本内容")`，任务标记为 failed |
+| PDF 全是扫描图片（无文本层） | 自动切换到页面渲染模式，将每页渲染为图片 |
 | PDF 加密/有密码保护 | `pdfplumber.open` 抛异常，捕获后转为 `ValueError`，任务 failed |
 | PDF 某页损坏 | 跳过该页，记录 warning，继续处理其他页 |
-| PDF 无嵌入图片 | `images` 返回空列表，不影响文本检查 |
+| PDF 无嵌入图片 | `images` 返回空列表（正常 PDF）或渲染页面图片（扫描件） |
 | 用户上传的 PDF 实际是图片 | magic bytes 验证会拦截（`%PDF` 不匹配） |
+| PyMuPDF 渲染失败 | 记录 warning，跳过该页，继续处理其他页 |
 
 ### 7.2 Checker 和下游代码的字段重命名影响
 
@@ -601,9 +678,14 @@ def _get_region_text(self, summarizer: ReportSummarizer, location: dict) -> str:
 ```toml
 dependencies = [
     # ... 现有依赖
-    "pdfplumber>=0.11.0",  # 新增
+    "pdfplumber>=0.11.0",  # PDF 文本和图片提取
+    "pymupdf>=1.23.0",     # 扫描件 PDF 页面渲染
 ]
 ```
+
+**注意事项**：
+- `pymupdf` 使用 AGPL 许可证，商业使用需考虑许可证兼容性
+- 如果许可证有问题，可替换为 `pdf2image>=1.16.0`（需要系统安装 Poppler）
 
 ---
 

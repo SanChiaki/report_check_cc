@@ -10,11 +10,11 @@
 
 本计划分为 8 个主要步骤，按依赖关系顺序执行：
 
-1. **添加依赖包** - 在 pyproject.toml 中添加 pdfplumber
+1. **添加依赖包** - 在 pyproject.toml 中添加 pdfplumber 和 pymupdf
 2. **数据模型重构** - CellData → ContentBlock，ReportData 调整
 3. **提取共享工具函数** - _detect_and_convert_format 到 parser/utils.py
 4. **Parser 抽象层** - BaseParser + ExcelParser 改造
-5. **PDFParser 实现** - 新增 PDF 解析器
+5. **PDFParser 实现** - 新增 PDF 解析器（含扫描件混合处理）
 6. **ReportSummarizer 适配** - 支持 PDF 摘要生成
 7. **Checker 层适配** - 所有 Checker 的字段重命名和 source_type 分发
 8. **API 和 Worker 层调整** - 文件验证和错误处理
@@ -27,7 +27,11 @@
 
 **文件**: `pyproject.toml`
 
-**操作**: 在 `dependencies` 列表中添加 `pdfplumber>=0.11.0`
+**操作**: 在 `dependencies` 列表中添加：
+- `pdfplumber>=0.11.0` - PDF 文本和图片提取
+- `pymupdf>=1.23.0` - 扫描件 PDF 页面渲染
+
+**注意**: pymupdf 使用 AGPL 许可证，商业使用需考虑许可证兼容性
 
 **验证**: 运行 `uv sync` 确保依赖安装成功
 
@@ -245,57 +249,41 @@ class ExcelParser(BaseParser):
 
 **内容**: 完整实现 PDFParser 类，包括:
 - `parse()` 主方法
-- `_extract_blocks()` 文本提取
-- `_extract_images()` 图片提取
-- 扫描件检测逻辑
+- `_extract_blocks()` 文本提取（含扫描件检测）
+- `_extract_blocks_from_rendered_pages()` 扫描件处理
+- `_extract_images()` 图片提取（含渲染图片提取）
+- `_extract_images_from_rendered_pages()` 页面渲染
+
+**混合处理逻辑**:
+
+```python
+def _extract_blocks(self, doc) -> list[ContentBlock]:
+    # 1. 尝试提取文本
+    # 2. 计算平均每页文本量
+    # 3. 如果 < 50 字符/页，调用 _extract_blocks_from_rendered_pages()
+    # 4. 否则返回正常文本块
+
+def _extract_blocks_from_rendered_pages(self, doc) -> list[ContentBlock]:
+    # 为每页创建占位符块，标记为 "RENDERED"
+    # 实际内容在渲染的图片中
+
+def _extract_images(self, doc, blocks) -> list[ImageData]:
+    # 检查是否为扫描件（blocks 中有 "RENDERED" 标记）
+    # 如果是，调用 _extract_images_from_rendered_pages()
+    # 否则提取嵌入图片
+
+def _extract_images_from_rendered_pages(self, doc) -> list[ImageData]:
+    # 使用 PyMuPDF (fitz) 将每页渲染为 150 DPI PNG
+    # 每页一张图片，存入 ImageData
+```
 
 **关键实现** (参考设计文档 Section 3.3):
 
-```python
-import logging
-import pdfplumber
-from pathlib import Path
-from io import BytesIO
+- 扫描件检测阈值：平均每页 < 50 字符
+- 渲染参数：150 DPI，PNG 格式
+- 错误处理：单页失败不影响其他页
 
-from report_check.parser.base import BaseParser
-from report_check.parser.models import ReportData, ContentBlock, ImageData
-from report_check.parser.utils import detect_and_convert_format
-
-logger = logging.getLogger(__name__)
-
-class PDFParser(BaseParser):
-    def parse(self, file_path: str) -> ReportData:
-        try:
-            doc = pdfplumber.open(file_path)
-        except Exception as e:
-            raise ValueError(f"无法打开 PDF 文件: {e}")
-
-        try:
-            blocks = self._extract_blocks(doc)
-            images = self._extract_images(doc, blocks)
-            metadata = {
-                "page_count": len(doc.pages),
-                "author": doc.metadata.get("Author", ""),
-                "title": doc.metadata.get("Title", ""),
-            }
-        except Exception as e:
-            doc.close()
-            raise ValueError(f"PDF 解析失败: {e}")
-        finally:
-            doc.close()
-
-        return ReportData(
-            file_name=Path(file_path).name,
-            source_type="pdf",
-            blocks=blocks,
-            images=images,
-            metadata=metadata,
-        )
-
-    # _extract_blocks 和 _extract_images 实现见设计文档
-```
-
-**验证**: 创建 `tests/test_parser/test_pdf.py` 并运行测试
+**验证**: 创建 `tests/test_parser/test_pdf.py` 并运行测试（需要准备正常 PDF 和扫描件 PDF 测试文件）
 
 ---
 
