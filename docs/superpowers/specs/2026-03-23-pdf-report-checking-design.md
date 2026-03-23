@@ -44,7 +44,8 @@ class ContentBlock:
     position: int       # Excel: 行号, PDF: 页码
     index: int          # Excel: 列号, PDF: 块序号
     content: Any        # 内容
-    content_type: str   # "s"/"n" 等
+    content_type: str   # Excel: "s"(字符串)/"n"(数字)/"b"(布尔)/"d"(日期)
+                        # PDF: "s"(文本，统一使用字符串类型)
     ref: str            # 可读标识（Excel: "A1", PDF: "P3.B5"）
 ```
 
@@ -168,14 +169,21 @@ class PDFParser(BaseParser):
 ```python
 def _extract_blocks(self, doc) -> list[ContentBlock]:
     blocks = []
+    total_text_length = 0
+
     for page_num, page in enumerate(doc.pages, start=1):
         try:
             text = page.extract_text()
             if not text or not text.strip():
                 continue  # 跳过空白页
 
+            total_text_length += len(text.strip())
+
             # 按段落分块（简单策略：按双换行符分割）
+            # 如果没有双换行符，按单换行符分割
             paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+            if not paragraphs:
+                paragraphs = [p.strip() for p in text.split('\n') if p.strip()]
 
             for block_idx, para in enumerate(paragraphs, start=1):
                 blocks.append(ContentBlock(
@@ -192,27 +200,59 @@ def _extract_blocks(self, doc) -> list[ContentBlock]:
     if not blocks:
         raise ValueError("PDF 中未提取到任何文本内容")
 
+    # 检测扫描件 PDF（文本层过少）
+    avg_text_per_page = total_text_length / len(doc.pages) if doc.pages else 0
+    if avg_text_per_page < 50:  # 平均每页少于 50 字符，可能是扫描件
+        logger.warning(f"PDF 可能是扫描件（平均每页 {avg_text_per_page:.1f} 字符）")
+        raise ValueError("PDF 可能是扫描件，需要 OCR 识别（当前不支持）")
+
     return blocks
 ```
+
+**效果验证标准：**
+当出现以下情况时，认为"效果不好"，需要升级为页面渲染方案：
+- 用户反馈定位准确率低于 70%（连续 10 个任务中有 3 个以上定位失败）
+- 复杂排版（多栏、表格）导致文本顺序混乱，AI 无法理解语义
+- 图表与文字关联错误（nearby_blocks 不相关）
 
 **图片提取策略：**
 ```python
 def _extract_images(self, doc, blocks: list[ContentBlock]) -> list[ImageData]:
+    """提取 PDF 中的嵌入图片
+
+    注意：pdfplumber 0.11.0 的 page.images 返回字典列表，每个字典包含：
+    - 'x0', 'y0', 'x1', 'y1': 图片坐标
+    - 'width', 'height': 尺寸
+    - 'name': 图片名称
+    - 'stream': PIL.PdfImagePlugin.PdfImageFile 对象（需调用 .convert() 获取字节）
+    """
     images = []
     for page_num, page in enumerate(doc.pages, start=1):
         try:
             page_images = page.images
             for img_idx, img_info in enumerate(page_images):
-                img_stream = img_info.get("stream")
-                if not img_stream:
+                # pdfplumber 的 images 是字典，包含 'stream' 键
+                # stream 是 PIL Image 对象，需要转换为字节
+                try:
+                    from io import BytesIO
+                    img_obj = img_info.get("stream")
+                    if img_obj is None:
+                        continue
+
+                    # 将 PIL Image 转换为字节
+                    buf = BytesIO()
+                    img_obj.save(buf, format='PNG')
+                    img_bytes = buf.getvalue()
+                except Exception as e:
+                    logger.warning(f"图片 {img_idx} 转换失败: {e}")
                     continue
 
-                img_bytes = img_stream.get_data()
                 fmt = self._detect_and_convert_format(img_bytes)
                 if fmt is None:
                     continue
 
-                # 获取同页文本块作为 nearby_blocks
+                # 获取同页文本块作为 nearby_blocks（取前 5 个）
+                # 选择策略：简单取同页前 5 个块，未来可根据坐标优化
                 nearby = [b for b in blocks if b.position == page_num][:5]
 
                 images.append(ImageData(
@@ -370,6 +410,26 @@ async def locate_content(self, description: str, context_hint: Optional[str] = N
     location_field = "sheet" if self.report_data.source_type == "excel" else "page"
     location_desc = "工作表名" if self.report_data.source_type == "excel" else "页码"
 
+    # 根据 source_type 调整 JSON 格式示例
+    if self.report_data.source_type == "excel":
+        location_example = '''
+    {
+      "sheet": "工作表名",
+      "cell": "A1",
+      "cell_range": "A1:B3",
+      "content": "找到的文本内容",
+      "context": "上下文说明"
+    }'''
+    else:  # PDF
+        location_example = '''
+    {
+      "page": 3,
+      "ref": "P3.B5",
+      "ref_range": "P3.B1:P3.B5",
+      "content": "找到的文本内容",
+      "context": "上下文说明"
+    }'''
+
     prompt = f"""以下是{source_label}的内容摘要：
 
 {report_summary}
@@ -381,14 +441,7 @@ async def locate_content(self, description: str, context_hint: Optional[str] = N
 请以 JSON 格式回复，格式如下：
 {{
   "found": true/false,
-  "locations": [
-    {{
-      "{location_field}": "{location_desc}",
-      "cell": "A1",
-      "cell_range": "A1:B3",
-      "content": "找到的文本内容",
-      "context": "上下文说明"
-    }}
+  "locations": [{location_example}
   ]
 }}
 
@@ -437,16 +490,41 @@ async def submit_check(
 
 ```python
 async def _process_task(self, task_id: str):
-    # ...
+    task = await self.db.get_task(task_id)
+    if not task:
+        logger.warning(f"Task not found: {task_id}")
+        return
+
     try:
         await self.db.update_task_status(task_id, TaskStatus.PROCESSING)
 
         # Step 1: Parse file
         await self.db.update_task_progress(task_id, 10)
-        parser = BaseParser.for_file(task["file_path"])  # 唯一改动
-        report_data = parser.parse(task["file_path"])
+        try:
+            parser = BaseParser.for_file(task["file_path"])
+            report_data = parser.parse(task["file_path"])
+        except ValueError as e:
+            # PDF 特定错误（扫描件、加密等）
+            error_msg = str(e)
+            if "扫描件" in error_msg or "OCR" in error_msg:
+                await self.db.update_task_status(
+                    task_id, TaskStatus.FAILED,
+                    error="PDF 是扫描件，需要 OCR 识别（当前不支持）"
+                )
+            elif "加密" in error_msg or "密码" in error_msg:
+                await self.db.update_task_status(
+                    task_id, TaskStatus.FAILED,
+                    error="PDF 已加密，需要密码解锁"
+                )
+            else:
+                await self.db.update_task_status(
+                    task_id, TaskStatus.FAILED,
+                    error=f"文件解析失败: {error_msg}"
+                )
+            return
 
         # Step 2-4: 完全不变，所有 Checker 直接复用
+        # ...
 ```
 
 ---
@@ -494,13 +572,13 @@ dependencies = [
 | 文件 | 修改内容 |
 |---|---|
 | `parser/models.py` | `CellData` → `ContentBlock`，`ReportData` 调整 |
-| `parser/base.py` | 新增 `BaseParser` 抽象类 |
+| `parser/base.py` | **新增** `BaseParser` 抽象类 |
 | `parser/excel.py` | 继承 `BaseParser`，适配新数据模型 |
-| `parser/pdf.py` | 新增 `PDFParser` 实现 |
+| `parser/pdf.py` | **新增** `PDFParser` 实现 |
 | `parser/summarizer.py` | 新增 `_summarize_pdf` 方法，`get_region` 适配 |
 | `checkers/base.py` | `locate_content` prompt 适配 |
 | `api/router.py` | 文件类型验证放宽 |
-| `worker/worker.py` | `parser = BaseParser.for_file(...)` |
+| `worker/worker.py` | `BaseParser.for_file()` + PDF 错误处理 |
 | `pyproject.toml` | 新增 `pdfplumber` 依赖 |
 
 ### 9.2 测试策略
