@@ -1,14 +1,12 @@
 import logging
-from io import BytesIO
 from pathlib import Path
 import openpyxl
 from openpyxl.utils import get_column_letter
-from PIL import Image
 from report_check.parser.models import ContentBlock, ImageData, ReportData
+from report_check.parser.utils import detect_and_convert_format
 
 logger = logging.getLogger(__name__)
 NEARBY_RADIUS = 3
-MAX_IMAGE_SIZE = 2048
 
 
 class ExcelParser:
@@ -47,7 +45,7 @@ class ExcelParser:
                 image_data = self._get_image_bytes(img)
                 if image_data is None:
                     continue
-                fmt = self._detect_and_convert_format(image_data)
+                fmt = detect_and_convert_format(image_data)
                 if fmt is None:
                     continue
                 anchor = self._get_anchor(img)
@@ -71,23 +69,6 @@ class ExcelParser:
         except Exception as e:
             logger.warning(f"Cannot read image data: {e}")
         return None
-
-    def _detect_and_convert_format(self, data: bytes) -> tuple[str, bytes | None] | None:
-        try:
-            pil_img = Image.open(BytesIO(data))
-        except Exception:
-            return None
-        fmt = (pil_img.format or "PNG").lower()
-        if max(pil_img.size) > MAX_IMAGE_SIZE:
-            pil_img.thumbnail((MAX_IMAGE_SIZE, MAX_IMAGE_SIZE))
-            buf = BytesIO()
-            pil_img.save(buf, format="PNG")
-            return ("png", buf.getvalue())
-        if fmt not in ("png", "jpeg", "jpg", "gif", "webp"):
-            buf = BytesIO()
-            pil_img.save(buf, format="PNG")
-            return ("png", buf.getvalue())
-        return (fmt, None)
 
     def _get_anchor(self, img) -> dict:
         anchor = {}
