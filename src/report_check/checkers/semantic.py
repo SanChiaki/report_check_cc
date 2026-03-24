@@ -1,15 +1,22 @@
 import json
 import logging
 import time
+from typing import TYPE_CHECKING
 
 from report_check.checkers.base import BaseChecker, CheckResult
 from report_check.parser.summarizer import ReportSummarizer
+
+if TYPE_CHECKING:
+    from report_check.storage.artifacts import CheckArtifact
 
 logger = logging.getLogger(__name__)
 
 
 class SemanticChecker(BaseChecker):
     """Use AI to check semantic content in the report."""
+
+    def __init__(self, report_data, model_manager, artifacts: "CheckArtifact | None" = None):
+        super().__init__(report_data, model_manager, artifacts=artifacts)
 
     async def check(self, rule_config: dict) -> CheckResult:
         start = time.time()
@@ -97,7 +104,10 @@ class SemanticChecker(BaseChecker):
   "confidence": 0.0-1.0
 }}"""
 
-        response = await self.model_manager.call_text_model(prompt)
+        response = await self.call_text_model_with_artifact(
+            prompt,
+            purpose="semantic_check",
+        )
         try:
             text = response.strip()
             if "```json" in text:

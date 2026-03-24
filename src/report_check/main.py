@@ -16,6 +16,7 @@ from report_check.core.exceptions import CheckError
 from report_check.models.manager import ModelManager
 from report_check.models.openai_adapter import OpenAIAdapter
 from report_check.models.qwen_adapter import QwenAdapter
+from report_check.storage.artifacts import ArtifactsManager
 from report_check.storage.database import Database
 from report_check.storage.file import FileStorage
 from report_check.worker.queue import TaskQueue
@@ -52,6 +53,11 @@ async def lifespan(app: FastAPI):
     app.state.file_storage = FileStorage(storage_config.get("upload_path", "data/uploads"))
     app.state.task_queue = TaskQueue()
 
+    # Init artifacts manager
+    artifacts_path = storage_config.get("artifacts_path", "data/tasks")
+    Path(artifacts_path).mkdir(parents=True, exist_ok=True)
+    app.state.artifacts_manager = ArtifactsManager(artifacts_path)
+
     # Init model manager
     model_manager = ModelManager(
         default_provider=model_config.get("default_provider", "openai")
@@ -69,6 +75,7 @@ async def lifespan(app: FastAPI):
         db=app.state.db,
         model_manager=model_manager,
         task_queue=app.state.task_queue,
+        artifacts_manager=app.state.artifacts_manager,
     )
     await app.state.worker.start()
 

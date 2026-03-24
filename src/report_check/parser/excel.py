@@ -1,21 +1,45 @@
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 import openpyxl
 from openpyxl.utils import get_column_letter
 from report_check.parser.base import BaseParser
 from report_check.parser.models import ContentBlock, ImageData, ReportData
 from report_check.parser.utils import detect_and_convert_format
 
+if TYPE_CHECKING:
+    from report_check.storage.artifacts import TaskArtifacts
+
 logger = logging.getLogger(__name__)
 NEARBY_RADIUS = 3
 
 
 class ExcelParser(BaseParser):
+    def __init__(self, artifacts: "TaskArtifacts | None" = None):
+        """
+        Args:
+            artifacts: Optional TaskArtifacts instance for recording parse details
+        """
+        self.artifacts = artifacts
+
     def parse(self, file_path: str) -> ReportData:
         wb = openpyxl.load_workbook(file_path, data_only=True)
         ws = wb.active
         content_blocks = self._extract_cells(ws)
         images = self._extract_images(ws, content_blocks)
+
+        parse_metadata = {
+            "type": "excel",
+            "sheet_name": ws.title,
+            "row_count": ws.max_row or 0,
+            "col_count": ws.max_column or 0,
+            "content_block_count": len(content_blocks),
+            "image_count": len(images),
+        }
+
+        if self.artifacts:
+            self.artifacts.save_parse_metadata(parse_metadata)
+
         return ReportData(
             file_name=Path(file_path).name,
             source_type="excel",
@@ -51,11 +75,30 @@ class ExcelParser(BaseParser):
                     continue
                 anchor = self._get_anchor(img)
                 nearby = self._get_nearby_blocks(content_blocks, anchor.get("row", 1), anchor.get("col", 1))
+
+                final_data = image_data if fmt[1] is None else fmt[1]
+                final_format = fmt[0]
+
+                image_id = f"img_{i}"
                 images.append(ImageData(
-                    id=f"img_{i}",
-                    data=image_data if fmt[1] is None else fmt[1],
-                    format=fmt[0], anchor=anchor, nearby_blocks=nearby,
+                    id=image_id,
+                    data=final_data,
+                    format=final_format,
+                    anchor=anchor,
+                    nearby_blocks=nearby,
                 ))
+
+                # Save image to artifacts
+                if self.artifacts:
+                    self.artifacts.save_parsed_image(
+                        image_id=image_id,
+                        data=final_data,
+                        format=final_format,
+                        metadata={
+                            "anchor": anchor,
+                            "nearby_blocks_count": len(nearby),
+                        }
+                    )
             except Exception as e:
                 logger.warning(f"Failed to extract image {i}: {e}")
         return images

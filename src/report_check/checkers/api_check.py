@@ -2,11 +2,14 @@ import base64
 import json
 import logging
 import time
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import httpx
 
 from report_check.checkers.base import BaseChecker, CheckResult
+
+if TYPE_CHECKING:
+    from report_check.storage.artifacts import CheckArtifact
 
 logger = logging.getLogger(__name__)
 
@@ -14,11 +17,22 @@ logger = logging.getLogger(__name__)
 class ApiChecker(BaseChecker):
     """Extract content from report, call external API, validate response."""
 
+    def __init__(self, report_data, model_manager, artifacts: "CheckArtifact | None" = None):
+        super().__init__(report_data, model_manager, artifacts=artifacts)
+
     async def check(self, rule_config: dict) -> CheckResult:
         start = time.time()
         extract_config = rule_config.get("extract", {})
         api_config = rule_config.get("api", {})
         validation_config = rule_config.get("validation", {})
+
+        # Save check config to artifacts
+        if self.artifacts:
+            self.artifacts.save_check_detail({
+                "extract_config": extract_config,
+                "api_config": {k: v for k, v in api_config.items() if k != "headers"},  # Don't log sensitive headers
+                "validation_config": validation_config,
+            })
 
         # Step 1: Extract content
         extracted = await self._extract_content(extract_config)
@@ -30,16 +44,35 @@ class ApiChecker(BaseChecker):
                 execution_time=time.time() - start,
             )
 
+        # Save extracted content to artifacts
+        if self.artifacts:
+            self.artifacts.save_check_detail({
+                "extracted_content_type": extract_config.get("type", "text"),
+                "extracted_location": extracted.get("location", {}),
+                "extracted_content_preview": str(extracted.get("content", ""))[:500],
+            })
+
         # Step 2: Call API
         try:
             api_response = await self._call_api(api_config, extracted["content"])
         except Exception as e:
+            # Save error to artifacts
+            if self.artifacts:
+                self.artifacts.save_check_detail({
+                    "api_error": str(e),
+                })
             return CheckResult(
                 status="error",
                 location=extracted.get("location", {}),
                 message=f"API 调用失败: {str(e)}",
                 execution_time=time.time() - start,
             )
+
+        # Save API response to artifacts
+        if self.artifacts:
+            self.artifacts.save_check_detail({
+                "api_response": api_response,
+            })
 
         # Step 3: Validate
         is_valid = self._validate_response(api_response, validation_config)

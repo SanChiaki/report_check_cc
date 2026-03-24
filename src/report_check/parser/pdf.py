@@ -2,11 +2,15 @@
 import logging
 from pathlib import Path
 from io import BytesIO
+from typing import TYPE_CHECKING
 import fitz  # PyMuPDF
 import pdfplumber
 from report_check.parser.base import BaseParser
 from report_check.parser.models import ContentBlock, ImageData, ReportData
 from report_check.parser.utils import detect_and_convert_format
+
+if TYPE_CHECKING:
+    from report_check.storage.artifacts import TaskArtifacts
 
 logger = logging.getLogger(__name__)
 SCANNED_THRESHOLD = 50  # 每页少于50字符视为扫描件
@@ -15,6 +19,13 @@ DPI = 150  # 页面渲染 DPI
 
 class PDFParser(BaseParser):
     """PDF 报告解析器，支持正常 PDF 和扫描件"""
+
+    def __init__(self, artifacts: "TaskArtifacts | None" = None):
+        """
+        Args:
+            artifacts: Optional TaskArtifacts instance for recording parse details
+        """
+        self.artifacts = artifacts
 
     def parse(self, file_path: str) -> ReportData:
         """解析 PDF 文件
@@ -60,12 +71,16 @@ class PDFParser(BaseParser):
         """解析正常 PDF（结构化文本提取）"""
         content_blocks = []
         images = []
+        parse_metadata = {"type": "normal", "pages": []}
 
         with pdfplumber.open(file_path) as pdf:
             for page_num, page in enumerate(pdf.pages, start=1):
+                page_info = {"page": page_num, "text_chars": 0, "images": 0}
+
                 # 提取文本
                 text = page.extract_text() or ""
                 if text.strip():
+                    page_info["text_chars"] = len(text)
                     content_blocks.append(ContentBlock(
                         content=text,
                         location=f"page_{page_num}",
@@ -76,6 +91,12 @@ class PDFParser(BaseParser):
                 # 提取图片
                 page_images = self._extract_images_from_page(page, page_num)
                 images.extend(page_images)
+                page_info["images"] = len(page_images)
+                parse_metadata["pages"].append(page_info)
+
+        # Save parse metadata
+        if self.artifacts:
+            self.artifacts.save_parse_metadata(parse_metadata)
 
         return ReportData(
             file_name=Path(file_path).name,
@@ -89,12 +110,14 @@ class PDFParser(BaseParser):
         """解析扫描件 PDF（页面渲染为图片）"""
         content_blocks = []
         images = []
+        parse_metadata = {"type": "scanned", "pages": [], "dpi": DPI}
 
         doc = fitz.open(file_path)
         page_count = len(doc)
 
         for page_num in range(page_count):
             page = doc[page_num]
+            page_info = {"page": page_num + 1}
 
             # 渲染页面为图片
             pix = page.get_pixmap(dpi=DPI)
@@ -103,13 +126,30 @@ class PDFParser(BaseParser):
             # 转换格式
             fmt = detect_and_convert_format(img_data)
             if fmt:
+                final_data = img_data if fmt[1] is None else fmt[1]
+                final_format = fmt[0]
+
                 images.append(ImageData(
                     id=f"page_{page_num + 1}",
-                    data=img_data if fmt[1] is None else fmt[1],
-                    format=fmt[0],
+                    data=final_data,
+                    format=final_format,
                     anchor={"page": page_num + 1},
                     nearby_blocks=[],
                 ))
+
+                # Save page image to artifacts
+                if self.artifacts:
+                    self.artifacts.save_parsed_page(
+                        page_num=page_num + 1,
+                        data=final_data,
+                        format=final_format,
+                        metadata={"dpi": DPI, "width": pix.width, "height": pix.height}
+                    )
+
+                page_info["rendered"] = True
+                page_info["width"] = pix.width
+                page_info["height"] = pix.height
+                page_info["format"] = final_format
 
             # 创建占位内容块
             content_blocks.append(ContentBlock(
@@ -119,7 +159,13 @@ class PDFParser(BaseParser):
                 metadata={"page": page_num + 1, "extraction_method": "pymupdf_render"},
             ))
 
+            parse_metadata["pages"].append(page_info)
+
         doc.close()
+
+        # Save parse metadata
+        if self.artifacts:
+            self.artifacts.save_parse_metadata(parse_metadata)
 
         return ReportData(
             file_name=Path(file_path).name,
@@ -145,13 +191,32 @@ class PDFParser(BaseParser):
                 if not fmt:
                     continue
 
+                final_data = img_data if fmt[1] is None else fmt[1]
+                final_format = fmt[0]
+
+                image_id = f"page_{page_num}_img_{i}"
                 images.append(ImageData(
-                    id=f"page_{page_num}_img_{i}",
-                    data=img_data if fmt[1] is None else fmt[1],
-                    format=fmt[0],
+                    id=image_id,
+                    data=final_data,
+                    format=final_format,
                     anchor={"page": page_num, "x0": img_obj.get("x0"), "y0": img_obj.get("y0")},
                     nearby_blocks=[],
                 ))
+
+                # Save image to artifacts
+                if self.artifacts:
+                    self.artifacts.save_parsed_image(
+                        image_id=image_id,
+                        data=final_data,
+                        format=final_format,
+                        metadata={
+                            "page": page_num,
+                            "x0": img_obj.get("x0"),
+                            "y0": img_obj.get("y0"),
+                            "width": img_obj.get("width"),
+                            "height": img_obj.get("height"),
+                        }
+                    )
         except Exception as e:
             logger.warning(f"Failed to extract images from page {page_num}: {e}")
 
