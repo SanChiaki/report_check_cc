@@ -27,8 +27,13 @@ class ArtifactsManager:
         self._call_counter = 0
 
     def init_task(self, task_id: str) -> "TaskArtifacts":
-        """初始化任务的过程文件夹"""
-        return TaskArtifacts(self.base_path / task_id, task_id)
+        """初始化任务的过程文件夹（如已存在则清理旧数据）"""
+        task_path = self.base_path / task_id
+        if task_path.exists():
+            # 清理旧数据，避免重试时混合新旧文件
+            import shutil
+            shutil.rmtree(task_path)
+        return TaskArtifacts(task_path, task_id)
 
     def get_task(self, task_id: str) -> "TaskArtifacts | None":
         """获取已有任务的过程文件管理器"""
@@ -317,10 +322,15 @@ class CheckArtifact:
         self.path = path
         self.task = task_artifacts
         self._attempt_counter = 0
+        self._detail_counter = 0
 
     def _next_attempt_id(self) -> str:
         self._attempt_counter += 1
         return f"{self._attempt_counter:02d}"
+
+    def _next_detail_id(self) -> str:
+        self._detail_counter += 1
+        return f"{self._detail_counter:02d}"
 
     def save_config(self, config: dict):
         """保存实际使用的检查配置"""
@@ -341,8 +351,9 @@ class CheckArtifact:
             self.task._write_text(attempt_dir / "error.txt", error)
 
     def save_check_detail(self, detail: dict):
-        """保存检查过程的详细信息"""
-        self.task._write_json(self.path / "detail.json", detail)
+        """保存检查过程的详细信息（每次调用使用独立编号文件，避免覆盖）"""
+        detail_id = self._next_detail_id()
+        self.task._write_json(self.path / f"detail_{detail_id}.json", detail)
 
     def save_result(self, result: dict):
         """保存检查结果"""

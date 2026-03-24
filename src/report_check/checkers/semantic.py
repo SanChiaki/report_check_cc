@@ -104,7 +104,10 @@ class SemanticChecker(BaseChecker):
   "confidence": 0.0-1.0
 }}"""
 
-        response = await self.model_manager.call_text_model(prompt)
+        response = await self.call_text_model_with_artifact(
+            prompt,
+            purpose="semantic_check",
+        )
         try:
             text = response.strip()
             if "```json" in text:

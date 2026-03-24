@@ -1,9 +1,12 @@
 import json
 import uuid
 import logging
+import tempfile
+import shutil
+import os
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
 from typing import Optional
 import zipfile
@@ -249,7 +252,7 @@ async def list_task_artifacts(request: Request, task_id: str):
 
 
 @router.get("/tasks/{task_id}/artifacts/download")
-async def download_task_artifacts(request: Request, task_id: str):
+async def download_task_artifacts(request: Request, task_id: str, background_tasks: BackgroundTasks):
     """Download all artifacts for a task as a zip file."""
     # Check if task exists
     task = await request.app.state.db.get_task(task_id)
@@ -264,19 +267,26 @@ async def download_task_artifacts(request: Request, task_id: str):
     if not artifacts_path.exists():
         raise HTTPException(status_code=404, detail="该任务没有 artifacts")
 
-    # Create zip file in memory
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        for file_path in artifacts_path.rglob("*"):
-            if file_path.is_file():
-                arcname = str(file_path.relative_to(artifacts_path))
-                zip_file.write(file_path, arcname)
+    # Create temp file for the zip
+    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+        tmp_path = tmp.name
 
-    zip_buffer.seek(0)
-    return StreamingResponse(
-        zip_buffer,
+    # Create zip archive
+    zip_path = shutil.make_archive(tmp_path[:-4], "zip", artifacts_path)
+
+    # Clean up temp file after streaming
+    def cleanup():
+        try:
+            os.unlink(zip_path)
+        except Exception:
+            pass
+
+    background_tasks.add_task(cleanup)
+
+    return FileResponse(
+        zip_path,
         media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename={task_id}_artifacts.zip"}
+        headers={"Content-Disposition": f"attachment; filename={task_id}_artifacts.zip"},
     )
 
 
