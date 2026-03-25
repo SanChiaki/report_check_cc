@@ -105,11 +105,24 @@ class BackgroundWorker:
 
             # Parse with artifact recording
             if file_path.endswith(".pdf"):
-                parser = PDFParser(artifacts=artifacts)
+                parser = PDFParser(artifacts=artifacts, model_manager=self.model_manager)
             else:
                 parser = ExcelParser(artifacts=artifacts)
 
             report_data = parser.parse(file_path)
+
+            # For scanned PDFs with text rules, extract text using vision model
+            if (
+                file_path.endswith(".pdf")
+                and report_data.metadata.get("is_scanned")
+                and any(r.get("type") == "text" for r in user_rules)
+            ):
+                logger.info(f"Scanned PDF with text rules detected, extracting text with vision model")
+                ocr_blocks = await parser.extract_text_with_vision(report_data)
+                if ocr_blocks:
+                    # Prepend OCR text blocks before image placeholders
+                    report_data.content_blocks = ocr_blocks + report_data.content_blocks
+                    logger.info(f"Added {len(ocr_blocks)} OCR text blocks to report data")
 
             # Save parsed data summary
             if artifacts:

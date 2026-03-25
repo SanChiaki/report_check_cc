@@ -190,8 +190,8 @@ class ApiChecker(BaseChecker):
             else:
                 resp = await client.request(method, endpoint, json=body, headers=headers)
 
-            await resp.raise_for_status()
-            return await resp.json()
+            resp.raise_for_status()
+            return resp.json()
 
     def _validate_response(self, response: dict, validation: dict) -> bool:
         """Validate API response using operator."""

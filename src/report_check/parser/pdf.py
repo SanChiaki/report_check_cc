@@ -1,4 +1,5 @@
 """PDF 报告解析器"""
+import asyncio
 import logging
 from pathlib import Path
 from io import BytesIO
@@ -11,6 +12,7 @@ from report_check.parser.utils import detect_and_convert_format
 
 if TYPE_CHECKING:
     from report_check.storage.artifacts import TaskArtifacts
+    from report_check.models.manager import ModelManager
 
 logger = logging.getLogger(__name__)
 SCANNED_THRESHOLD = 50  # 每页少于50字符视为扫描件
@@ -20,12 +22,14 @@ DPI = 150  # 页面渲染 DPI
 class PDFParser(BaseParser):
     """PDF 报告解析器，支持正常 PDF 和扫描件"""
 
-    def __init__(self, artifacts: "TaskArtifacts | None" = None):
+    def __init__(self, artifacts: "TaskArtifacts | None" = None, model_manager: "ModelManager | None" = None):
         """
         Args:
             artifacts: Optional TaskArtifacts instance for recording parse details
+            model_manager: Optional ModelManager for OCR with vision model
         """
         self.artifacts = artifacts
+        self.model_manager = model_manager
 
     def parse(self, file_path: str) -> ReportData:
         """解析 PDF 文件
@@ -237,4 +241,85 @@ class PDFParser(BaseParser):
             logger.warning(f"Cannot extract image data: {e}")
 
         return None
+
+    async def extract_text_with_vision(self, report_data: ReportData) -> list[ContentBlock]:
+        """使用多模态模型从扫描件 PDF 中提取文字
+
+        Args:
+            report_data: ReportData instance with is_scanned=True and images
+
+        Returns:
+            List of ContentBlock with extracted text
+        """
+        if not self.model_manager:
+            logger.warning("ModelManager not provided, cannot extract text from scanned PDF")
+            return []
+
+        if not report_data.metadata.get("is_scanned"):
+            logger.debug("Not a scanned PDF, skipping vision OCR")
+            return []
+
+        extracted_blocks = []
+        ocr_metadata = {"pages": [], "model": None}
+
+        for image_data in report_data.images:
+            page_num = image_data.anchor.get("page", 0)
+            logger.info(f"Extracting text from scanned page {page_num} using vision model")
+
+            prompt = """请提取这张图片中的所有文字内容，保持原有的段落和格式。
+如果包含表格，请保留表格结构（用 | 分隔列，用换行分隔行）。
+只返回提取的纯文本内容，不要添加任何解释。"""
+
+            try:
+                start_time = asyncio.get_event_loop().time()
+                response = await self.model_manager.call_multimodal_model(
+                    prompt=prompt,
+                    image=image_data.data
+                )
+                duration = (asyncio.get_event_loop().time() - start_time) * 1000
+
+                extracted_text = response.strip()
+                if extracted_text:
+                    extracted_blocks.append(ContentBlock(
+                        content=extracted_text,
+                        location=f"page_{page_num}",
+                        content_type="text",
+                        metadata={
+                            "page": page_num,
+                            "extraction_method": "vision_ocr",
+                            "source_image_id": image_data.id,
+                            "ocr_duration_ms": duration,
+                        }
+                    ))
+
+                ocr_metadata["pages"].append({
+                    "page": page_num,
+                    "success": True,
+                    "chars_extracted": len(extracted_text),
+                    "duration_ms": duration,
+                })
+
+                logger.info(f"Extracted {len(extracted_text)} chars from page {page_num}")
+
+            except Exception as e:
+                logger.error(f"Failed to extract text from page {page_num}: {e}")
+                ocr_metadata["pages"].append({
+                    "page": page_num,
+                    "success": False,
+                    "error": str(e),
+                })
+
+        # Save OCR metadata to artifacts
+        if self.artifacts:
+            self.artifacts.save_parse_metadata({
+                "ocr_extraction": ocr_metadata,
+                "total_pages": len(report_data.images),
+                "extracted_blocks": len(extracted_blocks),
+            })
+
+        return extracted_blocks
+
+    def has_text_rules(self, rules: list[dict]) -> bool:
+        """Check if any text check rules exist in the rules list"""
+        return any(rule.get("type") == "text" for rule in rules)
 

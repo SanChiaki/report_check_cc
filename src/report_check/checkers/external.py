@@ -133,8 +133,8 @@ class ExternalDataChecker(BaseChecker):
             else:
                 resp = await client.request(method, endpoint, headers=headers)
 
-            await resp.raise_for_status()
-            data = await resp.json()
+            resp.raise_for_status()
+            data = resp.json()
 
         # Navigate response path (e.g., "data.devices")
         if response_path:

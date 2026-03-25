@@ -78,14 +78,32 @@ class SemanticChecker(BaseChecker):
         )
 
     def _get_region_text(self, summarizer: ReportSummarizer, cell_range: str) -> str:
-        """Extract text from a cell range string like 'A10:B13'."""
+        """Extract text from a cell range string like 'A10:B13' or PDF page like 'page_1'."""
+        if not cell_range:
+            return summarizer.summarize(self.report_data)
+
+        # Handle PDF page format (e.g., "page_1")
+        if cell_range.startswith("page_"):
+            try:
+                page_num = int(cell_range.split("_")[1])
+                # Get text blocks for this page
+                page_blocks = [b for b in self.report_data.content_blocks
+                              if b.metadata.get("page") == page_num]
+                return "\n".join(str(b.content) for b in page_blocks if b.content)
+            except (ValueError, IndexError):
+                return summarizer.summarize(self.report_data)
+
+        # Handle Excel cell range format
         try:
             from openpyxl.utils.cell import range_boundaries
             min_col, min_row, max_col, max_row = range_boundaries(cell_range)
-            return summarizer.get_region(self.report_data, min_row, max_row)
+            if min_row and max_row:
+                return summarizer.get_region(self.report_data, min_row, max_row)
         except Exception:
-            # If range parsing fails, use full summary
-            return summarizer.summarize(self.report_data)
+            pass
+
+        # Fallback to full summary
+        return summarizer.summarize(self.report_data)
 
     async def _semantic_check(self, content: str, requirement: str) -> dict:
         """Use AI to verify content meets requirement."""
