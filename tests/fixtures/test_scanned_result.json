@@ -1,0 +1,189 @@
+{
+  "check_rules": {
+    "rules": [
+      {
+        "id": "text_001",
+        "name": "报告标题检查",
+        "type": "text",
+        "config": {
+          "keywords": [
+            "中国电信",
+            "5G 网络建设"
+          ],
+          "match_mode": "any",
+          "case_sensitive": false,
+          "min_occurrences": 1
+        }
+      },
+      {
+        "id": "text_002",
+        "name": "建设单位检查",
+        "type": "text",
+        "config": {
+          "keywords": [
+            "中国电信",
+            "智联通信"
+          ],
+          "match_mode": "any",
+          "case_sensitive": false,
+          "min_occurrences": 1
+        }
+      },
+      {
+        "id": "text_003",
+        "name": "项目进展检查",
+        "type": "text",
+        "config": {
+          "keywords": [
+            "完成",
+            "完工",
+            "施工"
+          ],
+          "match_mode": "any",
+          "case_sensitive": false,
+          "min_occurrences": 1
+        }
+      },
+      {
+        "id": "semantic_001",
+        "name": "建设内容语义检查",
+        "type": "semantic",
+        "config": {
+          "requirement": "报告中应包含项目建设相关内容，如5G网络、机房、信号塔等",
+          "context_hint": "查找项目建设或工程进展相关内容"
+        }
+      },
+      {
+        "id": "semantic_002",
+        "name": "检查记录语义检查",
+        "type": "semantic",
+        "config": {
+          "requirement": "报告中应包含检查记录或完工信息",
+          "context_hint": "查找检查日期、完工日期、审核结论等信息"
+        }
+      },
+      {
+        "id": "image_001",
+        "name": "现场照片检查",
+        "type": "image",
+        "config": {
+          "description": "检查是否包含机房安装检查照片或信号塔照片",
+          "min_count": 1
+        }
+      },
+      {
+        "id": "api_001",
+        "name": "API连通性检查",
+        "type": "api",
+        "config": {
+          "extract": {
+            "type": "text",
+            "description": "报告标题",
+            "context_hint": "查找报告标题"
+          },
+          "api": {
+            "endpoint": "https://httpbin.org/get",
+            "method": "GET"
+          },
+          "validation": {
+            "success_field": "url",
+            "success_value": "httpbin",
+            "operator": "contains"
+          }
+        }
+      },
+      {
+        "id": "external_001",
+        "name": "外部API可用性检查",
+        "type": "external_data",
+        "config": {
+          "extract": {
+            "type": "text",
+            "description": "中国电信或5G网络",
+            "context_hint": "查找项目相关信息"
+          },
+          "external_api": {
+            "endpoint": "https://httpbin.org/json",
+            "method": "GET"
+          },
+          "analysis": {
+            "requirement": "验证外部API返回的JSON数据格式正确，包含slideshow字段"
+          }
+        }
+      }
+    ]
+  },
+  "check_results": [
+    {
+      "rule_id": "text_001",
+      "rule_name": "报告标题检查",
+      "rule_type": "text",
+      "status": "passed",
+      "message": "Found 1 occurrence(s) of keywords: 中国电信",
+      "suggestion": "Content matches the expected keywords."
+    },
+    {
+      "rule_id": "text_002",
+      "rule_name": "建设单位检查",
+      "rule_type": "text",
+      "status": "passed",
+      "message": "Found 2 occurrence(s) of keywords: 中国电信, 智联通信",
+      "suggestion": "Content matches the expected keywords."
+    },
+    {
+      "rule_id": "text_003",
+      "rule_name": "项目进展检查",
+      "rule_type": "text",
+      "status": "passed",
+      "message": "Found 8 occurrence(s) of keywords: 完成, 完工, 施工",
+      "suggestion": "Content matches the expected keywords."
+    },
+    {
+      "rule_id": "semantic_001",
+      "rule_name": "建设内容语义检查",
+      "rule_type": "semantic",
+      "status": "passed",
+      "message": "报告内容符合要求，包含了项目建设相关内容，如5G网络、机房、信号塔等。",
+      "suggestion": ""
+    },
+    {
+      "rule_id": "semantic_002",
+      "rule_name": "检查记录语义检查",
+      "rule_type": "semantic",
+      "status": "passed",
+      "message": "报告内容满足要求，包含检查记录和完工信息。",
+      "suggestion": ""
+    },
+    {
+      "rule_id": "image_001",
+      "rule_name": "现场照片检查",
+      "rule_type": "image",
+      "status": "passed",
+      "message": "找到 3 张符合要求的图片",
+      "suggestion": ""
+    },
+    {
+      "rule_id": "api_001",
+      "rule_name": "API连通性检查",
+      "rule_type": "api",
+      "status": "passed",
+      "message": "验证通过",
+      "suggestion": ""
+    },
+    {
+      "rule_id": "external_001",
+      "rule_name": "外部API可用性检查",
+      "rule_type": "external_data",
+      "status": "passed",
+      "message": "外部API返回的JSON数据格式正确，包含slideshow字段。",
+      "suggestion": "无修改建议，数据格式已满足要求。"
+    }
+  ],
+  "summary": {
+    "total": 8,
+    "passed": 8,
+    "failed": 0,
+    "errors": 0
+  },
+  "extracted_content_preview": "=== Page 1 ===\n中国电信 5G 网络建设进展报告\n\n| 项目名称 | 华东区域 5G 覆盖提升工程 | 报告周期 |\n| --- | --- | --- |\n| 建设单位 | 中国电信某地市分公司 | 总包单位 |\n| 本期进展 | 完成核心机房设备安装巡检 | 当前状态 |\n| 塔桅建设 | 南城区 3 号塔位已完成主体完工 | 下阶段计划 |\n| 风险提示 | 雨天可能影响外场割接窗口 | 跟进事项 |\n| 现场照片说明 | 已附机房安装检查照片与信号塔完工照片 | 审核结论 |\n\n=== Page 2 ===\n2026-03-01 至 2026-03-18\n\n智联通信工程有限公司\n\n机房侧已完成联调准备\n\n开展站点通电与联调测试\n\n继续跟踪塔下供电接入审批\n\n可进入下一阶段施工准备\n\n=== Page 3 ===\n机房安装检查照片\n\n| 站点名称 | 核心机房 A 区 | 检查日期 |\n| --- | --- | --- |\n| 检查内容 | 设备安装、机柜巡检、温湿度 | 检查结论 |\n| 现场说明 | 运维人员正在对机柜和设备安装情况进行现场检查。 |  |\n\n=== Page 4 ===\n2026-03-18\n通过\n\n=== Page 5 ===\n信号塔完工照片\n\n| 塔位名称 | 南城区 3 号站点 | 完工日期 |\n| --- | --- | --- |\n| 建设内容 | 塔体安装、天线挂载、通信设备已安装完成，待后续通电联调。 | 施工状态 |\n\n=== Page 6 ===\n2026-03-17\n主体完工"
+}

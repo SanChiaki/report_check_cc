@@ -1,0 +1,120 @@
+{
+  "description": "基于 telecom_progress_report_scanned.pdf 的完整检查规则（所有检查类型）",
+  "document_info": {
+    "file": "telecom_progress_report_scanned.pdf",
+    "type": "扫描件 PDF",
+    "pages": 6,
+    "ocr_engine": "多模态大模型 (qwen-vl)",
+    "extracted_content_summary": "中国电信5G网络建设进展报告，包含华东区域5G覆盖提升工程、机房安装检查、信号塔完工等内容"
+  },
+  "rules": [
+    {
+      "id": "text_001",
+      "name": "报告标题检查",
+      "type": "text",
+      "config": {
+        "keywords": ["中国电信", "5G 网络建设"],
+        "match_mode": "any",
+        "case_sensitive": false,
+        "min_occurrences": 1
+      },
+      "rationale": "确认报告包含中国电信5G相关标题"
+    },
+    {
+      "id": "text_002",
+      "name": "建设单位检查",
+      "type": "text",
+      "config": {
+        "keywords": ["中国电信", "智联通信"],
+        "match_mode": "any",
+        "case_sensitive": false,
+        "min_occurrences": 1
+      },
+      "rationale": "验证建设单位和总包单位信息存在"
+    },
+    {
+      "id": "text_003",
+      "name": "项目进展检查",
+      "type": "text",
+      "config": {
+        "keywords": ["完成", "完工", "施工"],
+        "match_mode": "any",
+        "case_sensitive": false,
+        "min_occurrences": 1
+      },
+      "rationale": "确认报告包含项目进展状态描述"
+    },
+    {
+      "id": "semantic_001",
+      "name": "建设内容语义检查",
+      "type": "semantic",
+      "config": {
+        "requirement": "报告中应包含项目建设相关内容，如5G网络、机房、信号塔等",
+        "context_hint": "查找项目建设或工程进展相关内容"
+      },
+      "rationale": "语义验证报告涵盖核心建设要素"
+    },
+    {
+      "id": "semantic_002",
+      "name": "检查记录语义检查",
+      "type": "semantic",
+      "config": {
+        "requirement": "报告中应包含检查记录或完工信息",
+        "context_hint": "查找检查日期、完工日期、审核结论等信息"
+      },
+      "rationale": "确认报告包含质量检查和完工确认"
+    },
+    {
+      "id": "image_001",
+      "name": "现场照片检查",
+      "type": "image",
+      "config": {
+        "description": "检查是否包含机房安装检查照片或信号塔照片",
+        "min_count": 1
+      },
+      "rationale": "验证报告包含现场施工照片证据"
+    },
+    {
+      "id": "api_001",
+      "name": "API连通性检查",
+      "type": "api",
+      "config": {
+        "extract": {
+          "type": "text",
+          "description": "报告标题",
+          "context_hint": "查找报告标题"
+        },
+        "api": {
+          "endpoint": "https://httpbin.org/get",
+          "method": "GET"
+        },
+        "validation": {
+          "success_field": "url",
+          "success_value": "httpbin",
+          "operator": "contains"
+        }
+      },
+      "rationale": "验证外部API可访问并返回正确数据"
+    },
+    {
+      "id": "external_001",
+      "name": "外部API可用性检查",
+      "type": "external_data",
+      "config": {
+        "extract": {
+          "type": "text",
+          "description": "中国电信或5G网络",
+          "context_hint": "查找项目相关信息"
+        },
+        "external_api": {
+          "endpoint": "https://httpbin.org/json",
+          "method": "GET"
+        },
+        "analysis": {
+          "requirement": "验证外部API返回的JSON数据格式正确，包含slideshow字段"
+        }
+      },
+      "rationale": "验证外部数据源可用性并与报告内容比对"
+    }
+  ]
+}
