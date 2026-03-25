@@ -1,6 +1,6 @@
 import pytest
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from report_check.checkers.external import ExternalDataChecker
 from report_check.parser.excel import ExcelParser
@@ -28,9 +28,9 @@ class TestExternalDataChecker:
         checker = ExternalDataChecker(report, mm)
 
         with patch("report_check.checkers.external.httpx.AsyncClient") as mock_client:
-            mock_resp = AsyncMock()
+            mock_resp = Mock()
             mock_resp.json.return_value = {"data": {"devices": ["server1", "server2"]}}
-            mock_resp.raise_for_status = AsyncMock()
+            mock_resp.raise_for_status = Mock()
             mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_client.return_value)
             mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_client.return_value.get = AsyncMock(return_value=mock_resp)

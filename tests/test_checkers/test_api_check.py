@@ -1,6 +1,6 @@
 import pytest
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from report_check.checkers.api_check import ApiChecker
 from report_check.parser.excel import ExcelParser
@@ -25,9 +25,9 @@ class TestApiChecker:
 
         # Mock the HTTP call
         with patch("report_check.checkers.api_check.httpx.AsyncClient") as mock_client:
-            mock_resp = AsyncMock()
+            mock_resp = Mock()
             mock_resp.json.return_value = {"status": "valid"}
-            mock_resp.raise_for_status = AsyncMock()
+            mock_resp.raise_for_status = Mock()
             mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_client.return_value)
             mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_client.return_value.post = AsyncMock(return_value=mock_resp)
@@ -67,9 +67,9 @@ class TestApiChecker:
         checker = ApiChecker(report, mm)
 
         with patch("report_check.checkers.api_check.httpx.AsyncClient") as mock_client:
-            mock_resp = AsyncMock()
+            mock_resp = Mock()
             mock_resp.json.return_value = {"status": "valid"}
-            mock_resp.raise_for_status = AsyncMock()
+            mock_resp.raise_for_status = Mock()
             mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_client.return_value)
             mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_client.return_value.post = AsyncMock(return_value=mock_resp)
