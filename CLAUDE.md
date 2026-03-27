@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-AI 驱动的 Excel/PDF 报告一致性检查系统，支持五种检查类型：文本、语义、图片、API 和外部数据验证。
+AI 驱动的 Excel/PDF 报告一致性检查系统，支持六种检查类型：文本、语义、图片、多模态、API 和外部数据验证。
 
 ## 开发命令
 
@@ -52,7 +52,7 @@ npm run build                              # 构建生产版本到 dist/
 1. **CheckerFactory + BaseChecker 模式**
    - 所有检查器继承 `BaseChecker` (src/report_check/checkers/base.py)
    - 通过 `CheckerFactory.create(type, ...)` 创建检查器实例
-   - 五种检查器：TextChecker, SemanticChecker, ImageChecker, ApiChecker, ExternalDataChecker
+   - 六种检查器：TextChecker, SemanticChecker, ImageChecker, MultimodalChecker, ApiChecker, ExternalDataChecker
    - 每个检查器返回 `CheckResult` 数据类
 
 2. **异步任务队列架构**
@@ -64,7 +64,7 @@ npm run build                              # 构建生产版本到 dist/
 3. **规则引擎**
    - `RuleEngine` (engine/rule_engine.py): 合并基础规则和用户规则，过滤禁用规则
    - `VariableResolver` (engine/variable_resolver.py): 解析规则配置中的变量引用 (如 `${task_id}`)
-   - 规则 DSL 格式：`{"rules": [{"id": "r1", "name": "...", "type": "text|semantic|image|api|external_data", "config": {...}}]}`
+   - 规则 DSL 格式：`{"rules": [{"id": "r1", "name": "...", "type": "text|semantic|image|multimodal_check|api|external_data", "config": {...}}]}`
 
 4. **AI 模型管理**
    - `ModelManager` (models/manager.py): 统一接口，支持多提供商
@@ -77,12 +77,24 @@ npm run build                              # 构建生产版本到 dist/
    - 扫描件 PDF：使用 PyMuPDF 渲染页面为图片（无文字层时自动切换）
    - 图片压缩：`parser/utils.py` 限制 2048x2048 像素，2MB 大小
 
-6. **容错机制**
+6. **报告渲染 (ReportRenderer)**
+   - `ReportRenderer` (parser/renderer.py): 将报告转换为图片供多模态分析
+   - Excel：使用 PIL 将工作表内容渲染为图片
+   - PDF：使用 PyMuPDF 渲染页面为图片
+   - 支持已解析的页面图片复用
+
+7. **多模态检查 (MultimodalChecker)**
+   - `MultimodalChecker` (checkers/multimodal.py): 整体分析报告结构（文本+图片）
+   - 使用多模态 AI 理解动态内容（如质检项列表）
+   - 适用于：质检报告（检查每个质检项是否有对应照片）、结构化列表验证
+   - 自动渲染报告为图片后调用多模态模型分析
+
+8. **容错机制**
    - 孤儿任务恢复：启动时自动重新入队未完成的 processing 任务
    - API 熔断器：同一 API 连续失败 3 次后跳过后续调用
    - AI 调用重试：locate_content 方法最多重试 3 次
 
-7. **过程文件管理 (Artifacts)**
+9. **过程文件管理 (Artifacts)**
    - `ArtifactsManager` (storage/artifacts.py): 管理任务过程文件的保存和查询
    - 每个任务拥有独立文件夹：`data/tasks/{task_id}/`
    - 目录结构：

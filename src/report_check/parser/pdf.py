@@ -107,7 +107,7 @@ class PDFParser(BaseParser):
             source_type="pdf",
             content_blocks=content_blocks,
             images=images,
-            metadata={"page_count": len(pdf.pages), "is_scanned": False},
+            metadata={"page_count": len(pdf.pages), "is_scanned": False, "file_path": file_path},
         )
 
     def _parse_scanned_pdf(self, file_path: str) -> ReportData:
@@ -176,7 +176,7 @@ class PDFParser(BaseParser):
             source_type="pdf",
             content_blocks=content_blocks,
             images=images,
-            metadata={"page_count": page_count, "is_scanned": True},
+            metadata={"page_count": page_count, "is_scanned": True, "file_path": file_path},
         )
 
     def _extract_images_from_page(self, page, page_num: int) -> list[ImageData]:

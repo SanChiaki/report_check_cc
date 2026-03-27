@@ -45,7 +45,7 @@ class ExcelParser(BaseParser):
             source_type="excel",
             content_blocks=content_blocks,
             images=images,
-            metadata={"sheet_name": ws.title, "row_count": ws.max_row or 0, "col_count": ws.max_column or 0},
+            metadata={"sheet_name": ws.title, "row_count": ws.max_row or 0, "col_count": ws.max_column or 0, "file_path": file_path},
         )
 
     def _extract_cells(self, ws) -> list[ContentBlock]:

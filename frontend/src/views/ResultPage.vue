@@ -136,6 +136,7 @@ function typeLabel(t: string) {
     image: '图片',
     api: 'API',
     external_data: '外部数据',
+    multimodal_check: '多模态',
   }
   return map[t] ?? t
 }

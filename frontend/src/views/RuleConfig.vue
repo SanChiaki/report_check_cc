@@ -52,6 +52,7 @@
                   <option value="image">图片检查</option>
                   <option value="api">API 检查</option>
                   <option value="external_data">外部数据检查</option>
+                  <option value="multimodal_check">多模态检查</option>
                 </select>
               </div>
               <div class="form-field">
@@ -179,6 +180,25 @@
                 </div>
               </div>
             </template>
+
+            <!-- Multimodal check config -->
+            <template v-else-if="rule.type === 'multimodal_check'">
+              <div class="config-section">
+                <h3 class="config-title">多模态检查配置</h3>
+                <div class="form-field">
+                  <label>检查要求</label>
+                  <textarea
+                    v-model="rule.config.requirement"
+                    class="form-input textarea-sm"
+                    placeholder="检查报告中的每个质检项是否都有对应的现场照片证明"
+                  />
+                </div>
+                <div class="form-field">
+                  <label>上下文提示（可选）</label>
+                  <input v-model="rule.config.context_hint" type="text" class="form-input" placeholder="质检项通常在'质检分类'下方列出" />
+                </div>
+              </div>
+            </template>
           </div>
         </div>
       </div>
@@ -241,6 +261,7 @@ function typeLabel(t: string) {
     image: '图片',
     api: 'API',
     external_data: '外部数据',
+    multimodal_check: '多模态',
   }
   return map[t] ?? t
 }
@@ -251,6 +272,7 @@ function defaultConfig(type: string): RuleConfig {
   if (type === 'image') return { requirement: '', nearby_keywords: [] }
   if (type === 'api') return { extract_description: '', api_url: '', method: 'POST' }
   if (type === 'external_data') return { extract_description: '', data_url: '', analysis_requirement: '' }
+  if (type === 'multimodal_check') return { requirement: '', context_hint: '' }
   return {}
 }
 

@@ -9,6 +9,7 @@ from .semantic import SemanticChecker
 from .image import ImageChecker
 from .api_check import ApiChecker
 from .external import ExternalDataChecker
+from .multimodal import MultimodalChecker
 
 if TYPE_CHECKING:
     from report_check.storage.artifacts import CheckArtifact
@@ -25,6 +26,7 @@ class CheckerFactory:
         "image": ImageChecker,
         "api": ApiChecker,
         "external_data": ExternalDataChecker,
+        "multimodal_check": MultimodalChecker,
     }
 
     @classmethod

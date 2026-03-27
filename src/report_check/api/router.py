@@ -173,7 +173,7 @@ async def validate_rules(rules: dict):
 
     all_errors = []
     required_fields = {"id", "name", "type"}
-    valid_types = {"text", "semantic", "image", "api", "external_data"}
+    valid_types = {"text", "semantic", "image", "api", "external_data", "multimodal_check"}
 
     for i, rule in enumerate(rule_list):
         if not isinstance(rule, dict):

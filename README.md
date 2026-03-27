@@ -1,6 +1,6 @@
 # 报告一致性检查系统
 
-AI 驱动的 Excel/PDF 报告一致性检查工具，支持文本、语义、图片、API 和外部数据五种检查类型。
+AI 驱动的 Excel/PDF 报告一致性检查工具，支持文本、语义、图片、多模态、API 和外部数据六种检查类型。
 
 ## 特性
 
@@ -92,6 +92,15 @@ providers:
       "name": "机房清理图片",
       "type": "image",
       "config": { "requirement": "清理机房，图片应显示干净整洁的机房环境" }
+    },
+    {
+      "id": "r4",
+      "name": "质检项照片完整性",
+      "type": "multimodal_check",
+      "config": {
+        "requirement": "检查报告中的每个质检项是否都有对应的现场照片证明",
+        "context_hint": "质检项通常在'质检分类'下方列出"
+      }
     }
   ]
 }

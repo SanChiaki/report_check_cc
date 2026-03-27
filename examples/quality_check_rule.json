@@ -1,0 +1,14 @@
+{
+  "rules": [
+    {
+      "id": "qc_completeness",
+      "name": "质检项完整性检查",
+      "type": "multimodal_check",
+      "enabled": true,
+      "config": {
+        "requirement": "检查报告中的每个质检项（如机柜检查、配电检查、设备安装检查等）是否都有对应的现场照片证明。列出所有质检项及其照片状态。",
+        "context_hint": "质检项通常在'质检分类'下方列出，照片可能嵌入在表格中或作为附件"
+      }
+    }
+  ]
+}
