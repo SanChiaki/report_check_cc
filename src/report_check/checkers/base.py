@@ -29,17 +29,20 @@ class CheckResult:
 class BaseChecker(ABC):
     """Abstract base class for all checkers."""
 
-    def __init__(self, report_data, model_manager, artifacts: "CheckArtifact | None" = None):
+    def __init__(self, report_data, model_manager, artifacts: "CheckArtifact | None" = None,
+                 extra_report_data: list | None = None):
         """Initialize checker with report data and model manager.
 
         Args:
-            report_data: ReportData instance
+            report_data: ReportData instance (primary file)
             model_manager: ModelManager instance
             artifacts: Optional CheckArtifact instance for recording execution details
+            extra_report_data: Optional list of additional ReportData instances (for cross-file checks)
         """
         self.report_data = report_data
         self.model_manager = model_manager
         self.artifacts = artifacts
+        self.extra_report_data: list = extra_report_data or []
 
     @abstractmethod
     def check(self, rule_config) -> CheckResult:

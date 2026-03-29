@@ -37,17 +37,26 @@ class OpenAIAdapter(BaseModelAdapter):
             temperature=kwargs.get("temperature", 0.1), max_tokens=kwargs.get("max_tokens", 2000))
         return response.choices[0].message.content
 
-    async def call_multimodal_model(self, prompt: str, image: bytes, image_format: str = "png", **kwargs) -> str:
+    async def call_multimodal_model(self, prompt: str, image: bytes, image_format: str = "png",
+                                    extra_images: list[bytes] | None = None, **kwargs) -> str:
         image_b64 = base64.b64encode(image).decode("utf-8")
         mime_type = f"image/{image_format}" if image_format in ("png", "jpeg", "jpg", "gif", "webp") else "image/png"
         if image_format == "jpg":
             mime_type = "image/jpeg"
+
+        content = [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_b64}"}},
+        ]
+
+        # Append extra images (e.g. for signature comparison)
+        for extra in (extra_images or []):
+            extra_b64 = base64.b64encode(extra).decode("utf-8")
+            content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{extra_b64}"}})
+
         response = await self.multimodal_client.chat.completions.create(
             model=self.multimodal_model,
-            messages=[{"role": "user", "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_b64}"}}
-            ]}],
+            messages=[{"role": "user", "content": content}],
             temperature=kwargs.get("temperature", 0.1), max_tokens=kwargs.get("max_tokens", 1000))
         return response.choices[0].message.content
 

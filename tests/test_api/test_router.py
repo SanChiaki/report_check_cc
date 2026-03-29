@@ -34,7 +34,7 @@ class TestSubmitEndpoint:
         with open(sample_excel_path, "rb") as f:
             resp = client.post(
                 "/api/v1/check/submit",
-                files={"file": ("test.xlsx", f, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                files=[("files", ("test.xlsx", f, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))],
                 data={"rules": rules},
             )
         assert resp.status_code == 200
@@ -46,7 +46,7 @@ class TestSubmitEndpoint:
     def test_submit_invalid_extension(self, client):
         resp = client.post(
             "/api/v1/check/submit",
-            files={"file": ("test.txt", BytesIO(b"hello"), "text/plain")},
+            files=[("files", ("test.txt", BytesIO(b"hello"), "text/plain"))],
             data={"rules": "{}"},
         )
         assert resp.status_code == 400
@@ -55,7 +55,7 @@ class TestSubmitEndpoint:
         with open(sample_excel_path, "rb") as f:
             resp = client.post(
                 "/api/v1/check/submit",
-                files={"file": ("test.xlsx", f, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                files=[("files", ("test.xlsx", f, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))],
                 data={"rules": "not json"},
             )
         assert resp.status_code == 400

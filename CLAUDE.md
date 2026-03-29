@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-AI 驱动的 Excel/PDF 报告一致性检查系统，支持七种检查类型：文本、语义、图片、多模态、签名对比、API 和外部数据验证。
+AI 驱动的 Excel/PDF/MSG 报告一致性检查系统，支持七种检查类型：文本、语义、图片、多模态、签名对比、API 和外部数据验证。支持邮件（.msg）文件检查，报告内容可在邮件正文或附件（PDF/Excel）中。
 
 ## 开发命令
 
@@ -71,11 +71,16 @@ npm run build                              # 构建生产版本到 dist/
    - `OpenAIAdapter`: 适配器模式，支持分别配置文本模型和多模态模型的 base_url
    - 配置文件：config/models.yaml，支持环境变量替换
 
-5. **PDF 解析**
+5. **文件解析器**
    - `PDFParser` (parser/pdf.py): 混合解析方案
-   - 正常 PDF：使用 pdfplumber 提取文本和嵌入图片
-   - 扫描件 PDF：使用 PyMuPDF 渲染页面为图片（无文字层时自动切换）
-   - 图片压缩：`parser/utils.py` 限制 2048x2048 像素，2MB 大小
+     - 正常 PDF：使用 pdfplumber 提取文本和嵌入图片
+     - 扫描件 PDF：使用 PyMuPDF 渲染页面为图片（无文字层时自动切换）
+     - 图片压缩：`parser/utils.py` 限制 2048x2048 像素，2MB 大小
+   - `ExcelParser` (parser/excel.py): 解析 Excel 工作表和嵌入图片
+   - `MSGParser` (parser/msg.py): 解析邮件文件
+     - 提取邮件正文（主题、发件人、收件人、日期、正文内容）
+     - 自动解析附件（支持 PDF 和 Excel 附件）
+     - 统一输出为 ReportData 格式，附件内容位置标记为 `attachment:{文件名}:{原位置}`
 
 6. **报告渲染 (ReportRenderer)**
    - `ReportRenderer` (parser/renderer.py): 将报告转换为图片供多模态分析
@@ -122,14 +127,15 @@ npm run build                              # 构建生产版本到 dist/
 ### 数据流
 
 ```
-用户上传 Excel/PDF + 规则 DSL
+用户上传 Excel/PDF/MSG + 规则 DSL
   ↓
 FastAPI 接收 (api/router.py)
   ↓
 创建任务并入队 (worker/queue.py)
   ↓
 BackgroundWorker 处理 (worker/worker.py)
-  ├─ ExcelParser/PDFParser 解析文件 (parser/)
+  ├─ ExcelParser/PDFParser/MSGParser 解析文件 (parser/)
+  │  └─ MSGParser 自动解析邮件正文和附件（PDF/Excel）
   ├─ RuleEngine 合并规则 (engine/rule_engine.py)
   ├─ VariableResolver 解析变量 (engine/variable_resolver.py)
   ├─ CheckerFactory 创建检查器 (checkers/factory.py)

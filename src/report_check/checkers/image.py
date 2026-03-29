@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 class ImageChecker(BaseChecker):
     """Check images in the report using multimodal AI."""
 
-    def __init__(self, report_data, model_manager, artifacts: "CheckArtifact | None" = None):
-        super().__init__(report_data, model_manager, artifacts=artifacts)
+    def __init__(self, report_data, model_manager, artifacts: "CheckArtifact | None" = None, **kwargs):
+        super().__init__(report_data, model_manager, artifacts=artifacts, **kwargs)
         self.cache = ResultCache()
 
     async def check(self, rule_config: dict) -> CheckResult:

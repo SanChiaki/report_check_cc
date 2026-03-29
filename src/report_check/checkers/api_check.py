@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 class ApiChecker(BaseChecker):
     """Extract content from report, call external API, validate response."""
 
-    def __init__(self, report_data, model_manager, artifacts: "CheckArtifact | None" = None):
-        super().__init__(report_data, model_manager, artifacts=artifacts)
+    def __init__(self, report_data, model_manager, artifacts: "CheckArtifact | None" = None, **kwargs):
+        super().__init__(report_data, model_manager, artifacts=artifacts, **kwargs)
 
     async def check(self, rule_config: dict) -> CheckResult:
         start = time.time()

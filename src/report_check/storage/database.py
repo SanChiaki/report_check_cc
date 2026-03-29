@@ -21,11 +21,15 @@ class Database:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS tasks (
                 task_id TEXT PRIMARY KEY, file_name TEXT NOT NULL, file_path TEXT NOT NULL,
+                extra_files TEXT DEFAULT '[]',
                 rules TEXT NOT NULL, report_type TEXT, context_vars TEXT,
                 status TEXT NOT NULL DEFAULT 'pending', progress INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, started_at TIMESTAMP,
                 completed_at TIMESTAMP, error TEXT
             );
+            -- 为已有数据库添加 extra_files 列（如果不存在）
+            CREATE TABLE IF NOT EXISTS _migrations (key TEXT PRIMARY KEY);
+            INSERT OR IGNORE INTO _migrations VALUES ('add_extra_files');
             CREATE TABLE IF NOT EXISTS check_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
                 rule_id TEXT NOT NULL, rule_name TEXT NOT NULL, rule_type TEXT NOT NULL,
@@ -44,6 +48,12 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at);
             CREATE INDEX IF NOT EXISTS idx_check_results_task_id ON check_results(task_id);
         """)
+        # 迁移：为旧数据库添加 extra_files 列
+        try:
+            conn.execute("ALTER TABLE tasks ADD COLUMN extra_files TEXT DEFAULT '[]'")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # 列已存在，忽略
         conn.close()
 
     async def create_task(
@@ -54,17 +64,19 @@ class Database:
         rules: dict,
         report_type: str | None = None,
         context_vars: dict | None = None,
+        extra_file_paths: list[str] | None = None,
     ) -> str:
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 """
-                INSERT INTO tasks (task_id, file_name, file_path, rules, report_type, context_vars)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO tasks (task_id, file_name, file_path, extra_files, rules, report_type, context_vars)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task_id,
                     file_name,
                     file_path,
+                    json.dumps(extra_file_paths or []),
                     json.dumps(rules),
                     report_type,
                     json.dumps(context_vars) if context_vars is not None else None,
@@ -86,6 +98,7 @@ class Database:
                 task["rules"] = json.loads(task["rules"])
                 if task["context_vars"] is not None:
                     task["context_vars"] = json.loads(task["context_vars"])
+                task["extra_files"] = json.loads(task.get("extra_files") or "[]")
                 return task
 
     async def update_task_status(self, task_id: str, status: TaskStatus, error: str | None = None):

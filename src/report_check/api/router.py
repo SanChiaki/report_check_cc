@@ -34,6 +34,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 EXCEL_MAGIC = b"PK"
 PDF_MAGIC = b"%PDF"
+MSG_MAGIC = b"\xD0\xCF\x11\xE0"  # MSG/OLE file magic
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
 
 
@@ -50,27 +51,28 @@ async def health_check(request: Request):
 @limiter.limit("10/minute")
 async def submit_check(
     request: Request,
-    file: UploadFile = File(...),
+    files: list[UploadFile] = File(...),
     rules: str = Form(...),
     report_type: Optional[str] = Form(None),
     context_vars: Optional[str] = Form(None),
 ):
-    # Validate file extension
-    if not file.filename or not file.filename.endswith((".xlsx", ".xls", ".pdf")):
-        raise HTTPException(status_code=400, detail="仅支持 .xlsx、.xls 或 .pdf 文件")
+    if not files:
+        raise HTTPException(status_code=400, detail="至少需要上传一个文件")
 
-    # Read file
-    file_data = await file.read()
-
-    # Validate file size
-    if len(file_data) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="文件大小超过 20MB 限制")
-
-    # Validate magic bytes
-    is_excel = file_data[:2] == EXCEL_MAGIC
-    is_pdf = file_data[:4] == PDF_MAGIC
-    if not (is_excel or is_pdf):
-        raise HTTPException(status_code=400, detail="文件格式不合法")
+    # Validate all files
+    file_data_list = []
+    for f in files:
+        if not f.filename or not f.filename.endswith((".xlsx", ".xls", ".pdf", ".msg")):
+            raise HTTPException(status_code=400, detail=f"仅支持 .xlsx、.xls、.pdf 或 .msg 文件：{f.filename}")
+        data = await f.read()
+        if len(data) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=400, detail=f"文件 {f.filename} 大小超过 20MB 限制")
+        is_excel = data[:2] == EXCEL_MAGIC
+        is_pdf = data[:4] == PDF_MAGIC
+        is_msg = data[:4] == MSG_MAGIC
+        if not (is_excel or is_pdf or is_msg):
+            raise HTTPException(status_code=400, detail=f"文件格式不合法：{f.filename}")
+        file_data_list.append((f.filename, data))
 
     # Parse rules
     try:
@@ -90,20 +92,30 @@ async def submit_check(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="context_vars 必须是有效的 JSON")
 
-    # Save file
+    # Save files
     task_id = str(uuid.uuid4())
+    primary_filename, primary_data = file_data_list[0]
     file_path = await request.app.state.file_storage.save_uploaded_file(
-        file_data, file.filename, task_id
+        primary_data, primary_filename, task_id
     )
+
+    # Save extra files (if any)
+    extra_file_paths = []
+    for i, (fname, fdata) in enumerate(file_data_list[1:], start=1):
+        extra_path = await request.app.state.file_storage.save_uploaded_file(
+            fdata, f"extra_{i}_{fname}", task_id
+        )
+        extra_file_paths.append(extra_path)
 
     # Create task
     await request.app.state.db.create_task(
         task_id=task_id,
-        file_name=file.filename,
+        file_name=primary_filename,
         file_path=file_path,
         rules=rules_dict,
         report_type=report_type,
         context_vars=ctx_vars,
+        extra_file_paths=extra_file_paths,
     )
 
     # Enqueue
@@ -173,7 +185,7 @@ async def validate_rules(rules: dict):
 
     all_errors = []
     required_fields = {"id", "name", "type"}
-    valid_types = {"text", "semantic", "image", "api", "external_data", "multimodal_check"}
+    valid_types = {"text", "semantic", "image", "api", "external_data", "multimodal_check", "signature_compare"}
 
     for i, rule in enumerate(rule_list):
         if not isinstance(rule, dict):
@@ -331,5 +343,7 @@ async def get_task_artifact(request: Request, task_id: str, file_path: str):
         content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     elif file_path.endswith(".pdf"):
         content_type = "application/pdf"
+    elif file_path.endswith(".msg"):
+        content_type = "application/vnd.ms-outlook"
 
     return FileResponse(file_full_path, media_type=content_type, filename=file_full_path.name)

@@ -1,10 +1,11 @@
 # 报告一致性检查系统
 
-AI 驱动的 Excel/PDF 报告一致性检查工具，支持文本、语义、图片、多模态、签名对比、API 和外部数据七种检查类型。
+AI 驱动的 Excel/PDF/MSG 报告一致性检查工具，支持文本、语义、图片、多模态、签名对比、API 和外部数据七种检查类型。
 
 ## 特性
 
-- **多格式支持**：Excel (.xlsx/.xls) 和 PDF（含扫描件）
+- **多格式支持**：Excel (.xlsx/.xls)、PDF（含扫描件）和邮件 (.msg)
+- **邮件智能解析**：自动提取邮件正文和附件（PDF/Excel）内容
 - **多文件输入**：支持上传多个文件进行跨文件检查（如签名对比）
 - **混合 PDF 解析**：自动检测正常 PDF 和扫描件，文本层缺失时自动切换为页面渲染
 - **AI 驱动检查**：支持文本关键词、语义理解、图片内容识别、签名对比
@@ -68,7 +69,7 @@ providers:
 
 ## 前端页面
 
-- `/` — 提交检查：上传 Excel/PDF + 输入规则 DSL + 提交
+- `/` — 提交检查：上传 Excel/PDF/MSG + 输入规则 DSL + 提交
 - `/result/:taskId` — 查看检查结果（自动轮询）
 - `/rules` — 规则配置：可视化编辑规则 DSL
 
@@ -114,6 +115,24 @@ providers:
         "signature_description": "客户手写签名",
         "grid_size": 20,
         "padding_cells": 1
+      }
+    },
+    {
+      "id": "r6",
+      "name": "邮件正文包含关键词",
+      "type": "text",
+      "config": {
+        "field": "email_body",
+        "keywords": ["质检报告", "已完成"]
+      }
+    },
+    {
+      "id": "r7",
+      "name": "邮件附件数据验证",
+      "type": "text",
+      "config": {
+        "field": "attachment:report.pdf:page_1",
+        "expected": "检验结果：合格"
       }
     }
   ]

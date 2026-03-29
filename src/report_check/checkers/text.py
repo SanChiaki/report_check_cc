@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 class TextChecker(BaseChecker):
     """Checker for text-based rules."""
 
-    def __init__(self, report_data, model_manager, artifacts: "CheckArtifact | None" = None):
-        super().__init__(report_data, model_manager, artifacts=artifacts)
+    def __init__(self, report_data, model_manager, artifacts: "CheckArtifact | None" = None, **kwargs):
+        super().__init__(report_data, model_manager, artifacts=artifacts, **kwargs)
 
     def check(self, rule_config) -> CheckResult:
         """Execute a text check rule.

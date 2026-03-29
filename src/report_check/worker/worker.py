@@ -10,6 +10,7 @@ from report_check.engine.variable_resolver import VariableResolver
 from report_check.models.manager import ModelManager
 from report_check.parser.excel import ExcelParser
 from report_check.parser.pdf import PDFParser
+from report_check.parser.msg import MSGParser
 from report_check.storage.artifacts import ArtifactsManager, TaskArtifacts
 from report_check.storage.database import Database, TaskStatus
 from report_check.worker.queue import TaskQueue
@@ -106,10 +107,33 @@ class BackgroundWorker:
             # Parse with artifact recording
             if file_path.endswith(".pdf"):
                 parser = PDFParser(artifacts=artifacts, model_manager=self.model_manager)
+            elif file_path.endswith(".msg"):
+                parser = MSGParser()
             else:
                 parser = ExcelParser(artifacts=artifacts)
 
             report_data = parser.parse(file_path)
+
+            # Parse extra files
+            extra_report_data = []
+            for extra_path in task.get("extra_files", []):
+                try:
+                    if extra_path.endswith(".pdf"):
+                        extra_parser = PDFParser(artifacts=artifacts, model_manager=self.model_manager)
+                    elif extra_path.endswith(".msg"):
+                        extra_parser = MSGParser()
+                    else:
+                        extra_parser = ExcelParser(artifacts=artifacts)
+                    extra_data = extra_parser.parse(extra_path)
+                    extra_report_data.append(extra_data)
+                    logger.info(f"Parsed extra file: {extra_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to parse extra file {extra_path}: {e}")
+
+            # Step 2: Load rules and resolve variables
+            await self.db.update_task_progress(task_id, 20)
+            engine = RuleEngine()
+            user_rules = task["rules"].get("rules", [])
 
             # For scanned PDFs with text rules, extract text using vision model
             if (
@@ -120,7 +144,6 @@ class BackgroundWorker:
                 logger.info(f"Scanned PDF with text rules detected, extracting text with vision model")
                 ocr_blocks = await parser.extract_text_with_vision(report_data)
                 if ocr_blocks:
-                    # Prepend OCR text blocks before image placeholders
                     report_data.content_blocks = ocr_blocks + report_data.content_blocks
                     logger.info(f"Added {len(ocr_blocks)} OCR text blocks to report data")
 
@@ -148,11 +171,6 @@ class BackgroundWorker:
                     ],
                     "metadata": report_data.metadata,
                 })
-
-            # Step 2: Load rules and resolve variables
-            await self.db.update_task_progress(task_id, 20)
-            engine = RuleEngine()
-            user_rules = task["rules"].get("rules", [])
 
             # Save user rules
             if artifacts:
@@ -229,7 +247,8 @@ class BackgroundWorker:
                 # Create checker with artifact support
                 checker = CheckerFactory.create(
                     rule_type, report_data, self.model_manager,
-                    artifacts=check_artifact
+                    artifacts=check_artifact,
+                    extra_report_data=extra_report_data,
                 )
 
                 check_result = checker.check(rule["config"])

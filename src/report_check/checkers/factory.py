@@ -10,6 +10,7 @@ from .image import ImageChecker
 from .api_check import ApiChecker
 from .external import ExternalDataChecker
 from .multimodal import MultimodalChecker
+from .signature import SignatureChecker
 
 if TYPE_CHECKING:
     from report_check.storage.artifacts import CheckArtifact
@@ -27,6 +28,7 @@ class CheckerFactory:
         "api": ApiChecker,
         "external_data": ExternalDataChecker,
         "multimodal_check": MultimodalChecker,
+        "signature_compare": SignatureChecker,
     }
 
     @classmethod
@@ -36,14 +38,16 @@ class CheckerFactory:
         report_data,
         model_manager,
         artifacts: "CheckArtifact | None" = None,
+        extra_report_data: list | None = None,
     ) -> BaseChecker:
         """Create a checker instance.
 
         Args:
             checker_type: Type of checker to create
-            report_data: ReportData instance
+            report_data: ReportData instance (primary file)
             model_manager: ModelManager instance
             artifacts: Optional CheckArtifact instance for recording execution details
+            extra_report_data: Optional list of additional ReportData instances
 
         Returns:
             BaseChecker instance
@@ -58,7 +62,8 @@ class CheckerFactory:
             )
 
         checker_class = cls.CHECKER_MAP[checker_type]
-        return checker_class(report_data, model_manager, artifacts=artifacts)
+        return checker_class(report_data, model_manager, artifacts=artifacts,
+                             extra_report_data=extra_report_data or [])
 
     @classmethod
     def register(cls, checker_type: str, checker_class: Type[BaseChecker]) -> None:

@@ -22,9 +22,11 @@ class ModelManager:
         adapter = self.get_adapter(provider)
         return await self._with_retry(adapter.call_text_model, retry, prompt, **kwargs)
 
-    async def call_multimodal_model(self, prompt: str, image: bytes, provider: str | None = None, retry: int = 3, **kwargs) -> str:
+    async def call_multimodal_model(self, prompt: str, image: bytes, provider: str | None = None,
+                                    retry: int = 3, extra_images: list[bytes] | None = None, **kwargs) -> str:
         adapter = self.get_adapter(provider)
-        return await self._with_retry(adapter.call_multimodal_model, retry, prompt, image=image, **kwargs)
+        return await self._with_retry(adapter.call_multimodal_model, retry, prompt,
+                                      image=image, extra_images=extra_images, **kwargs)
 
     async def _with_retry(self, func, max_retries: int, *args, **kwargs):
         for attempt in range(max_retries):

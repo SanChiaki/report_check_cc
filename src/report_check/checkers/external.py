@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 class ExternalDataChecker(BaseChecker):
     """Extract data from report, fetch external data, use AI to compare."""
 
-    def __init__(self, report_data, model_manager, artifacts: "CheckArtifact | None" = None):
-        super().__init__(report_data, model_manager, artifacts=artifacts)
+    def __init__(self, report_data, model_manager, artifacts: "CheckArtifact | None" = None, **kwargs):
+        super().__init__(report_data, model_manager, artifacts=artifacts, **kwargs)
     """Extract data from report, fetch external data, use AI to compare."""
 
     async def check(self, rule_config: dict) -> CheckResult:

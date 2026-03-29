@@ -23,7 +23,7 @@ class ImageData:
 @dataclass
 class ReportData:
     file_name: str
-    source_type: Literal["excel", "pdf"]
+    source_type: Literal["excel", "pdf", "email"]
     content_blocks: list[ContentBlock]
     images: list[ImageData]
     metadata: dict[str, Any]
