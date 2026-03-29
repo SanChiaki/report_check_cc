@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-AI 驱动的 Excel/PDF 报告一致性检查系统，支持六种检查类型：文本、语义、图片、多模态、API 和外部数据验证。
+AI 驱动的 Excel/PDF 报告一致性检查系统，支持七种检查类型：文本、语义、图片、多模态、签名对比、API 和外部数据验证。
 
 ## 开发命令
 
@@ -52,7 +52,7 @@ npm run build                              # 构建生产版本到 dist/
 1. **CheckerFactory + BaseChecker 模式**
    - 所有检查器继承 `BaseChecker` (src/report_check/checkers/base.py)
    - 通过 `CheckerFactory.create(type, ...)` 创建检查器实例
-   - 六种检查器：TextChecker, SemanticChecker, ImageChecker, MultimodalChecker, ApiChecker, ExternalDataChecker
+   - 七种检查器：TextChecker, SemanticChecker, ImageChecker, MultimodalChecker, SignatureChecker, ApiChecker, ExternalDataChecker
    - 每个检查器返回 `CheckResult` 数据类
 
 2. **异步任务队列架构**
@@ -64,7 +64,7 @@ npm run build                              # 构建生产版本到 dist/
 3. **规则引擎**
    - `RuleEngine` (engine/rule_engine.py): 合并基础规则和用户规则，过滤禁用规则
    - `VariableResolver` (engine/variable_resolver.py): 解析规则配置中的变量引用 (如 `${task_id}`)
-   - 规则 DSL 格式：`{"rules": [{"id": "r1", "name": "...", "type": "text|semantic|image|multimodal_check|api|external_data", "config": {...}}]}`
+   - 规则 DSL 格式：`{"rules": [{"id": "r1", "name": "...", "type": "text|semantic|image|multimodal_check|signature_compare|api|external_data", "config": {...}}]}`
 
 4. **AI 模型管理**
    - `ModelManager` (models/manager.py): 统一接口，支持多提供商
@@ -89,12 +89,22 @@ npm run build                              # 构建生产版本到 dist/
    - 适用于：质检报告（检查每个质检项是否有对应照片）、结构化列表验证
    - 自动渲染报告为图片后调用多模态模型分析
 
-8. **容错机制**
+8. **签名对比检查 (SignatureChecker)**
+   - `SignatureChecker` (checkers/signature.py): 跨文件签名对比，验证是否同一人签名
+   - 网格编号法：将图片划分为 NxN 网格（默认 20x20），AI 返回边界格子（如 C15-D15）而非像素坐标
+   - 边界格子定位：AI 返回 top_left_cell 和 bottom_right_cell，相比像素坐标精度提升 2 倍
+   - 可配置 padding：支持向外扩展 N 个格子（默认 1）确保完整覆盖签名
+   - 网格可视化：红色列标签（A-T）、蓝色行标签（1-20）、灰色网格线，保存为 artifacts 便于调试
+   - 签名裁切：基于 AI 返回的格子范围裁切签名图片，保存为证据
+   - 多模态对比：将两张裁切后的签名图发送给 AI 判断是否同一人
+   - 适用于：合同签名验证、报告签名一致性检查
+
+9. **容错机制**
    - 孤儿任务恢复：启动时自动重新入队未完成的 processing 任务
    - API 熔断器：同一 API 连续失败 3 次后跳过后续调用
    - AI 调用重试：locate_content 方法最多重试 3 次
 
-9. **过程文件管理 (Artifacts)**
+10. **过程文件管理 (Artifacts)**
    - `ArtifactsManager` (storage/artifacts.py): 管理任务过程文件的保存和查询
    - 每个任务拥有独立文件夹：`data/tasks/{task_id}/`
    - 目录结构：
