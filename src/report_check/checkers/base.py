@@ -24,6 +24,7 @@ class CheckResult:
     rule_id: str = ""
     rule_name: str = ""
     rule_type: str = ""
+    details: dict = field(default_factory=dict)
 
 
 class BaseChecker(ABC):

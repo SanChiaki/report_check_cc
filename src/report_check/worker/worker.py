@@ -278,6 +278,7 @@ class BackgroundWorker:
                     "example": result.example,
                     "confidence": result.confidence,
                     "execution_time": result.execution_time,
+                    "details": result.details,
                 }
                 results.append(result_data)
 

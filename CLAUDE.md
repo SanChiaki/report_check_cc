@@ -52,7 +52,7 @@ npm run build                              # 构建生产版本到 dist/
 1. **CheckerFactory + BaseChecker 模式**
    - 所有检查器继承 `BaseChecker` (src/report_check/checkers/base.py)
    - 通过 `CheckerFactory.create(type, ...)` 创建检查器实例
-   - 七种检查器：TextChecker, SemanticChecker, ImageChecker, MultimodalChecker, SignatureChecker, ApiChecker, ExternalDataChecker
+   - 八种检查器：TextChecker, SemanticChecker, ImageChecker, MultimodalChecker, SignatureChecker, ImageConsistencyChecker, ApiChecker, ExternalDataChecker
    - 每个检查器返回 `CheckResult` 数据类
 
 2. **异步任务队列架构**
@@ -64,7 +64,7 @@ npm run build                              # 构建生产版本到 dist/
 3. **规则引擎**
    - `RuleEngine` (engine/rule_engine.py): 合并基础规则和用户规则，过滤禁用规则
    - `VariableResolver` (engine/variable_resolver.py): 解析规则配置中的变量引用 (如 `${task_id}`)
-   - 规则 DSL 格式：`{"rules": [{"id": "r1", "name": "...", "type": "text|semantic|image|multimodal_check|signature_compare|api|external_data", "config": {...}}]}`
+   - 规则 DSL 格式：`{"rules": [{"id": "r1", "name": "...", "type": "text|semantic|image|multimodal_check|image_consistency|signature_compare|api|external_data", "config": {...}}]}`
 
 4. **AI 模型管理**
    - `ModelManager` (models/manager.py): 统一接口，支持多提供商
@@ -84,7 +84,7 @@ npm run build                              # 构建生产版本到 dist/
 
 6. **报告渲染 (ReportRenderer)**
    - `ReportRenderer` (parser/renderer.py): 将报告转换为图片供多模态分析
-   - Excel：使用 PIL 将工作表内容渲染为图片
+   - Excel：优先使用 LibreOffice (`soffice --headless --convert-to pdf`) 转换为 PDF，再用 PyMuPDF 渲染为图片；LibreOffice 不可用时回退到 PIL 渲染
    - PDF：使用 PyMuPDF 渲染页面为图片
    - 支持已解析的页面图片复用
 
@@ -94,7 +94,17 @@ npm run build                              # 构建生产版本到 dist/
    - 适用于：质检报告（检查每个质检项是否有对应照片）、结构化列表验证
    - 自动渲染报告为图片后调用多模态模型分析
 
-8. **签名对比检查 (SignatureChecker)**
+8. **配图一致性检查 (ImageConsistencyChecker)**
+   - `ImageConsistencyChecker` (checkers/image_consistency.py): 验证检查项的配图是否符合其描述
+   - 自主识别检查项：AI 自动分析报告内容，识别所有包含配图的检查项（不限制命名方式）
+   - 配图定位：自动匹配每个检查项对应的图片
+   - 智能判断：使用多模态 AI 判断图片内容是否与检查项描述相符
+   - 配置参数：
+     - `requirement`: 检查要求描述（默认："检查项的配图是否符合检查项的描述"）
+     - `strict_mode`: 严格模式（默认：false，为 true 时要求所有项都通过）
+   - 适用于：质检报告配图审核、检查表单图片验证、审计报告附件检查
+
+9. **签名对比检查 (SignatureChecker)**
    - `SignatureChecker` (checkers/signature.py): 跨文件签名对比，验证是否同一人签名
    - 网格编号法：将图片划分为 NxN 网格（默认 20x20），AI 返回边界格子（如 C15-D15）而非像素坐标
    - 边界格子定位：AI 返回 top_left_cell 和 bottom_right_cell，相比像素坐标精度提升 2 倍

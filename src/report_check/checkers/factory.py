@@ -11,6 +11,7 @@ from .api_check import ApiChecker
 from .external import ExternalDataChecker
 from .multimodal import MultimodalChecker
 from .signature import SignatureChecker
+from .image_consistency import ImageConsistencyChecker
 
 if TYPE_CHECKING:
     from report_check.storage.artifacts import CheckArtifact
@@ -29,6 +30,7 @@ class CheckerFactory:
         "external_data": ExternalDataChecker,
         "multimodal_check": MultimodalChecker,
         "signature_compare": SignatureChecker,
+        "image_consistency": ImageConsistencyChecker,
     }
 
     @classmethod
