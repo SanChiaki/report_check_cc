@@ -3,7 +3,7 @@ default_provider: openai
 providers:
   openai:
     # 文本模型配置
-    text_model: openai/gpt-4o-2024-11-20
+    text_model: qwen/qwen3-vl-32b-instruct
     text_api_key: ${OPENAI_API_KEY}
     text_base_url: ${OPENAI_API_BASE_URL}
     # 多模态模型配置

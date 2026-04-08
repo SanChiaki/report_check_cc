@@ -107,10 +107,37 @@ class MultimodalChecker(BaseChecker):
         if not results:
             return {"status": "error", "message": "无分析结果"}
 
-        # If any page passed, consider it passed
+        # Collect all failed messages
+        failed = [r for r in results if r.get("status") == "failed"]
+        errors = [r for r in results if r.get("status") == "error"]
         passed = [r for r in results if r.get("status") == "passed"]
-        if passed:
-            return passed[0]
 
-        # Otherwise return first result
-        return results[0]
+        if failed:
+            # Merge all failed messages
+            messages = []
+            suggestions = []
+            for i, r in enumerate(failed):
+                page_label = f"第 {i + 1} 页" if len(failed) > 1 else ""
+                msg = r.get("message", "")
+                if page_label and msg:
+                    msg = f"[{page_label}] {msg}"
+                messages.append(msg)
+                sug = r.get("suggestion", "")
+                if sug:
+                    suggestions.append(sug)
+
+            merged_message = "\n".join(m for m in messages if m)
+            merged_suggestion = "\n".join(s for s in suggestions if s)
+
+            return {
+                "status": "failed",
+                "message": merged_message,
+                "suggestion": merged_suggestion,
+                "confidence": min(r.get("confidence", 0.9) for r in failed),
+            }
+
+        if errors:
+            return errors[0]
+
+        # All passed
+        return passed[0]

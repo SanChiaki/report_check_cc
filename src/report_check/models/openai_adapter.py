@@ -98,7 +98,7 @@ class OpenAIAdapter(BaseModelAdapter):
         self.text_client, self._text_cache = _create_auth_httpx_client(**text_kwargs)
         self.text_client_openai = AsyncOpenAI(
             api_key="",  # Auth handled by httpx client
-            base_url=None,  # Base URL set on httpx client
+            base_url=text_kwargs.get("base_url"),  # Use the base_url from config
             http_client=self.text_client,
         )
 
@@ -109,7 +109,7 @@ class OpenAIAdapter(BaseModelAdapter):
         self.multimodal_client, self._mm_cache = _create_auth_httpx_client(**mm_kwargs)
         self.multimodal_client_openai = AsyncOpenAI(
             api_key="",
-            base_url=None,
+            base_url=mm_kwargs.get("base_url"),
             http_client=self.multimodal_client,
         )
 

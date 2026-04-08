@@ -22,7 +22,8 @@ from report_check.worker.queue import TaskQueue
 from report_check.worker.worker import BackgroundWorker
 
 # Load environment variables from .env file
-load_dotenv()
+project_root = Path(__file__).resolve().parent.parent.parent
+load_dotenv(dotenv_path=project_root / ".env")
 
 logger = logging.getLogger(__name__)
 
