@@ -61,6 +61,10 @@ async def lifespan(app: FastAPI):
     model_manager = ModelManager(
         default_provider=model_config.get("default_provider", "openai")
     )
+
+    # 注册自定义 token fetcher（必须在创建 OpenAIAdapter 之前 import）
+    from report_check.models import fetchers  # noqa: F401
+
     for name, cfg in model_config.get("providers", {}).items():
         model_manager.register_adapter(name, OpenAIAdapter(cfg))
 
