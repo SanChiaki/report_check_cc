@@ -36,7 +36,15 @@
     <div class="card">
       <div class="section-header">
         <h2 class="section-title">检查规则</h2>
-        <button class="btn-secondary" @click="loadExample">加载示例</button>
+        <div class="example-selector">
+          <select v-model="selectedTemplate" @change="onTemplateChange" class="template-select">
+            <option value="">选择模板...</option>
+            <option value="kickoff">开工报告</option>
+            <option value="progress">进度报告（EISDP）</option>
+            <option value="quality">质量报告</option>
+            <option value="completion">完工报告</option>
+          </select>
+        </div>
       </div>
 
       <!-- Raw DSL editor -->
@@ -127,6 +135,144 @@ const jsonParseError = ref('')
 const validateErrors = ref<Array<{ rule_id: string; field: string; message: string }>>([])
 const rulesValid = ref<boolean | null>(null)
 const ruleListRef = ref<InstanceType<typeof RuleList> | null>(null)
+const selectedTemplate = ref('')
+
+const ruleTemplates: Record<string, { rules: Rule[] }> = {
+  kickoff: {
+    rules: [
+      {
+        id: 'r1',
+        name: '交付内容语义识别',
+        type: 'semantic',
+        config: { requirement: '报告中是否存在"交付内容"相关的内容，需通过语义理解确认交付内容的具体描述' },
+      },
+      {
+        id: 'r2',
+        name: '主要产品设备信息',
+        type: 'text',
+        config: { keywords: ['设备', '产品', '型号', '规格'], match_mode: 'any' },
+      },
+      {
+        id: 'r3',
+        name: '交付计划时间逻辑校验',
+        type: 'semantic',
+        config: { requirement: '交付计划中包含时间描述，判断时间是否符合逻辑，例如开工报告发送日期不得早于开工日期' },
+      },
+    ],
+  },
+  progress: {
+    rules: [
+      {
+        id: 'r1',
+        name: '仪表盘信息完整性',
+        type: 'semantic',
+        config: { requirement: '项目仪表盘中的每一项都需要填写，不能有空的字段' },
+      },
+      {
+        id: 'r2',
+        name: '整体进展与进度一致性',
+        type: 'semantic',
+        config: { requirement: '整体进展模块需描述项目的整体进展和进度，且报告进度要与项目仪表盘中的进度信息一致' },
+      },
+      {
+        id: 'r3',
+        name: '风险及问题三要素检查',
+        type: 'semantic',
+        config: { requirement: '报告中必须有描述项目当前风险的模块，当内容不为空时，每一项都需要包含三要素：1）问题或风险描述；2）责任人；3）完成时间' },
+      },
+      {
+        id: 'r4',
+        name: '当前进展与周期匹配',
+        type: 'semantic',
+        config: { requirement: '进展内容需要和报告周期（日报、周报、双周报、月报，根据报告日期判断）相匹配' },
+      },
+      {
+        id: 'r5',
+        name: '下期计划时间校验',
+        type: 'semantic',
+        config: { requirement: '下期计划描述未来需要完成的事情，计划中的时间不得早于报告日期' },
+      },
+    ],
+  },
+  quality: {
+    rules: [
+      {
+        id: 'r1',
+        name: '质检总结完整性',
+        type: 'semantic',
+        config: { requirement: '说明质检的主要设备、质检的结论，如果质检不通过，必须包含问题描述' },
+      },
+      {
+        id: 'r2',
+        name: '质检明细配图一致性',
+        type: 'image_consistency',
+        config: { requirement: '检查质检明细中的每个检查项是否都有对应的现场照片证明，且图片内容符合检查项描述', strict_mode: false },
+      },
+    ],
+  },
+  completion: {
+    rules: [
+      {
+        id: 'r1',
+        name: '交付内容语义识别',
+        type: 'semantic',
+        config: { requirement: '报告中是否存在"交付内容"相关的内容，需通过语义理解确认交付内容的具体描述' },
+      },
+      {
+        id: 'r2',
+        name: '主要产品设备信息',
+        type: 'text',
+        config: { keywords: ['设备', '产品', '型号', '规格'], match_mode: 'any' },
+      },
+      {
+        id: 'r3',
+        name: '文档移交记录',
+        type: 'semantic',
+        config: { requirement: '报告中包含项目涉及的文档移交记录，需要有文档名、数量、接收人、移交时间' },
+      },
+      {
+        id: 'r4',
+        name: '账号密码移交记录',
+        type: 'semantic',
+        config: { requirement: '报告中包含账号密码移交内容，包含密码类型、数量、对应的设备、接收人、移交时间' },
+      },
+      {
+        id: 'r5',
+        name: '客户培训记录',
+        type: 'semantic',
+        config: { requirement: '报告中包含对客户的培训记录，包含培训主题、培训时间、参培人员名字' },
+      },
+    ],
+  },
+}
+
+function onTemplateChange() {
+  const template = ruleTemplates[selectedTemplate.value]
+  if (!template) {
+    rulesText.value = ''
+    rules.value = []
+    rulesValid.value = null
+    validateErrors.value = []
+    return
+  }
+  const payload = {
+    rules: template.rules.map((r) => {
+      const obj: Record<string, unknown> = {
+        id: r.id,
+        name: r.name,
+        type: r.type,
+        config: r.config,
+      }
+      if (r.disabled) obj.disabled = true
+      return obj
+    }),
+  }
+  rulesText.value = JSON.stringify(payload, null, 2)
+  rulesValid.value = null
+  validateErrors.value = []
+  debouncedParse(rulesText.value)
+  debouncedValidate(rulesText.value)
+}
 
 // Sync textarea → rules[] (debounced 300ms)
 const debouncedParse = useDebounceFn((text: string) => {
@@ -214,35 +360,6 @@ function getFileIcon(fileName: string) {
   if (fileName.endsWith('.msg')) return '✉️'
   if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) return '📊'
   return '📄'
-}
-
-function loadExample() {
-  rulesText.value = JSON.stringify({
-    rules: [
-      {
-        id: 'r1',
-        name: '检查交付内容章节',
-        type: 'text',
-        config: { keywords: ['交付内容'], match_mode: 'any' },
-      },
-      {
-        id: 'r2',
-        name: '移交记录完整性',
-        type: 'semantic',
-        config: { requirement: '移交记录中要包含移交人、移交时间、移交命令' },
-      },
-      {
-        id: 'r3',
-        name: '机房清理图片',
-        type: 'image',
-        config: { requirement: '清理机房，图片应显示干净整洁的机房环境' },
-      },
-    ],
-  }, null, 2)
-  rulesValid.value = null
-  validateErrors.value = []
-  debouncedParse(rulesText.value)
-  debouncedValidate(rulesText.value)
 }
 
 async function submit() {
@@ -427,6 +544,23 @@ async function submit() {
 }
 
 .btn-secondary:hover { background: #f0f3ff; }
+
+.example-selector { display: flex; align-items: center; }
+
+.template-select {
+  border: 1px solid #4f6ef7;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #4f6ef7;
+  background: #fff;
+  cursor: pointer;
+  outline: none;
+  transition: background 0.2s;
+}
+
+.template-select:hover { background: #f0f3ff; }
 
 .error-banner {
   background: #fff5f5;
