@@ -185,3 +185,9 @@ providers:
 | `QWEN_API_KEY` | Qwen API Key | - |
 | `QWEN_API_BASE_URL` | Qwen API 基础 URL | - |
 | `MODEL_PROVIDER` | 默认模型提供商 | `openai` |
+
+## 开发注意事项
+
+**关闭开发服务器：**
+- `uv run uvicorn` 启动的链路是 `uv run → python .venv/bin/uvicorn`，`pkill -f "uvicorn"` 只会杀掉 `uv run` 父进程，子进程会继续存活
+- 正确做法：`ps aux | grep uvicorn` 确认所有相关进程，然后用 `kill -9` 逐个指定 PID 清理，确认 `ps` 无残留后再重启
