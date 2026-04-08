@@ -61,7 +61,7 @@ class ValidationError(BaseModel):
 
 class RuleValidateResponse(BaseModel):
     valid: bool
-    errors: list[str] = []
+    errors: list[ValidationError] = []
 
 
 class ErrorResponse(BaseModel):

@@ -21,6 +21,7 @@ from report_check.api.schemas import (
     HealthResponse,
     LocationInfo,
     RuleValidateResponse,
+    ValidationError,
 )
 from report_check.core.exceptions import CheckError
 from report_check.engine.validator import RuleValidator
@@ -181,25 +182,29 @@ async def get_check_result(request: Request, task_id: str):
 async def validate_rules(rules: dict):
     rule_list = rules.get("rules", [])
     if not isinstance(rule_list, list):
-        return RuleValidateResponse(valid=False, errors=["'rules' must be a list"])
+        return RuleValidateResponse(
+            valid=False,
+            errors=[ValidationError(rule_id="", field="rules", message="'rules' must be a list")],
+        )
 
-    all_errors = []
+    structured_errors: list[ValidationError] = []
     required_fields = {"id", "name", "type"}
-    valid_types = {"text", "semantic", "image", "api", "external_data", "multimodal_check", "signature_compare"}
+    valid_types = {"text", "semantic", "image", "api", "external_data", "multimodal_check", "signature_compare", "image_consistency"}
 
     for i, rule in enumerate(rule_list):
+        rule_id = rule.get("id", f"r{i}")
         if not isinstance(rule, dict):
-            all_errors.append(f"Rule {i}: must be a dict")
+            structured_errors.append(ValidationError(rule_id=rule_id, field="", message="must be a dict"))
             continue
         for field in required_fields:
             if field not in rule:
-                all_errors.append(f"Rule {i}: missing required field '{field}'")
+                structured_errors.append(ValidationError(rule_id=rule_id, field=field, message=f"missing required field '{field}'"))
         if "type" in rule and rule["type"] not in valid_types:
-            all_errors.append(f"Rule {i}: unknown type '{rule['type']}'")
+            structured_errors.append(ValidationError(rule_id=rule_id, field="type", message=f"unknown type '{rule['type']}'"))
 
     return RuleValidateResponse(
-        valid=len(all_errors) == 0,
-        errors=all_errors,
+        valid=len(structured_errors) == 0,
+        errors=structured_errors,
     )
 
 

@@ -45,9 +45,15 @@ export interface CheckResultResponse {
   error?: string
 }
 
+export interface ValidationError {
+  rule_id: string
+  field: string
+  message: string
+}
+
 export interface ValidateResponse {
   valid: boolean
-  errors: string[]
+  errors: ValidationError[]
 }
 
 export interface Template {

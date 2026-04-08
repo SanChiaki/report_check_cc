@@ -35,24 +35,41 @@
 
     <div class="card">
       <div class="section-header">
-        <h2 class="section-title">检查规则 DSL</h2>
+        <h2 class="section-title">检查规则</h2>
         <button class="btn-secondary" @click="loadExample">加载示例</button>
       </div>
+
+      <!-- Raw DSL editor -->
       <textarea
         v-model="rulesText"
         class="rules-editor"
         placeholder='{"rules": [{"id": "r1", "name": "检查交付内容", "type": "text", "config": {"keywords": ["交付内容"]}}]}'
         spellcheck="false"
+        @input="onTextareaInput"
       />
-      <div v-if="validateErrors.length" class="error-list">
-        <p v-for="e in validateErrors" :key="e" class="error-item">⚠ {{ e }}</p>
+      <div v-if="jsonParseError" class="error-banner">{{ jsonParseError }}</div>
+      <div v-else-if="validateErrors.length" class="error-list">
+        <p v-for="(e, i) in validateErrors" :key="i" class="error-item">⚠ [{{ e.rule_id }}] {{ e.message }}</p>
       </div>
-      <div v-if="rulesValid === true" class="success-msg">✓ 规则格式正确</div>
+      <div v-else-if="rulesValid === true" class="success-msg">✓ 规则格式正确</div>
+
+      <!-- Visual rule editor -->
+      <div v-if="!jsonParseError && rules.length > 0" class="rule-list-wrapper">
+        <div class="section-header" style="margin-top: 20px;">
+          <span class="section-title">可视化编辑</span>
+          <button class="btn-secondary" @click="ruleListRef?.addRule()">+ 新增规则</button>
+        </div>
+        <RuleList
+          ref="ruleListRef"
+          :rules="rules"
+          :errors="validateErrors"
+          @update:rules="onRulesUpdate"
+        />
+      </div>
     </div>
 
     <div class="actions">
-      <button class="btn-secondary" @click="validateOnly" :disabled="submitting">验证规则</button>
-      <button class="btn-primary" @click="submit" :disabled="submitting || !selectedFile || !rulesText.trim()">
+      <button class="btn-primary" @click="submit" :disabled="submitting || !selectedFile || !!jsonParseError || rules.length === 0">
         {{ submitting ? '提交中...' : '提交检查' }}
       </button>
     </div>
@@ -65,17 +82,113 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { submitCheck, validateRules } from '../api'
+import RuleList from '../components/RuleList.vue'
+import { useDebounceFn } from '../utils/useDebounce'
+
+interface RuleConfig {
+  keywords?: string[]
+  match_mode?: string
+  case_sensitive?: boolean
+  requirement?: string
+  nearby_keywords?: string[]
+  extract_description?: string
+  api_url?: string
+  method?: string
+  data_url?: string
+  analysis_requirement?: string
+  signature_description?: string
+  file1_ref?: number
+  file2_ref?: number
+  grid_size?: number
+  padding_cells?: number
+  strict_mode?: boolean
+  context_hint?: string
+  [key: string]: unknown
+}
+
+interface Rule {
+  id: string
+  name: string
+  type: string
+  disabled: boolean
+  config: RuleConfig
+}
 
 const router = useRouter()
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const selectedFile = ref<File | null>(null)
 const rulesText = ref('')
+const rules = ref<Rule[]>([])
 const isDragging = ref(false)
 const submitting = ref(false)
 const submitError = ref('')
-const validateErrors = ref<string[]>([])
+const jsonParseError = ref('')
+const validateErrors = ref<Array<{ rule_id: string; field: string; message: string }>>([])
 const rulesValid = ref<boolean | null>(null)
+const ruleListRef = ref<InstanceType<typeof RuleList> | null>(null)
+
+// Sync textarea → rules[] (debounced 300ms)
+const debouncedParse = useDebounceFn((text: string) => {
+  try {
+    const parsed = JSON.parse(text)
+    if (Array.isArray(parsed)) {
+      // Plain array — wrap in {rules: []}
+      rules.value = parsed as Rule[]
+    } else if (parsed.rules && Array.isArray(parsed.rules)) {
+      rules.value = parsed.rules as Rule[]
+    } else {
+      rules.value = []
+    }
+    jsonParseError.value = ''
+  } catch {
+    jsonParseError.value = 'JSON 格式错误'
+  }
+}, 300)
+
+// Auto-validate (debounced 500ms)
+const debouncedValidate = useDebounceFn(async (text: string) => {
+  if (!text.trim()) {
+    validateErrors.value = []
+    rulesValid.value = null
+    return
+  }
+  try {
+    const parsed = JSON.parse(text)
+    const res = await validateRules(parsed)
+    validateErrors.value = res.errors as typeof validateErrors.value
+    rulesValid.value = res.valid
+  } catch {
+    // JSON parse errors handled separately
+  }
+}, 500)
+
+function onTextareaInput() {
+  jsonParseError.value = ''
+  debouncedParse(rulesText.value)
+  debouncedValidate(rulesText.value)
+}
+
+// Sync rules[] → textarea (immediate, no debounce)
+function onRulesUpdate(updatedRules: Rule[]) {
+  rules.value = updatedRules
+  const payload = {
+    rules: updatedRules.map((r) => {
+      const obj: Record<string, unknown> = {
+        id: r.id,
+        name: r.name,
+        type: r.type,
+        config: r.config,
+      }
+      if (r.disabled) obj.disabled = true
+      return obj
+    }),
+  }
+  rulesText.value = JSON.stringify(payload, null, 2)
+  rulesValid.value = null
+  validateErrors.value = []
+  debouncedValidate.cancel()
+}
 
 function onFileChange(e: Event) {
   const input = e.target as HTMLInputElement
@@ -128,30 +241,14 @@ function loadExample() {
   }, null, 2)
   rulesValid.value = null
   validateErrors.value = []
-}
-
-async function validateOnly() {
-  validateErrors.value = []
-  rulesValid.value = null
-  let parsed: object
-  try {
-    parsed = JSON.parse(rulesText.value)
-  } catch {
-    validateErrors.value = ['JSON 格式错误']
-    return
-  }
-  try {
-    const res = await validateRules(parsed)
-    validateErrors.value = res.errors
-    rulesValid.value = res.valid
-  } catch (e: unknown) {
-    validateErrors.value = [(e as Error).message]
-  }
+  debouncedParse(rulesText.value)
+  debouncedValidate(rulesText.value)
 }
 
 async function submit() {
   submitError.value = ''
   if (!selectedFile.value) return
+  if (rules.value.length === 0) return
   let parsed: object
   try {
     parsed = JSON.parse(rulesText.value)
@@ -205,6 +302,11 @@ async function submit() {
 }
 
 .section-header .section-title { margin-bottom: 0; }
+
+.rule-list-wrapper {
+  border-top: 1px solid #f0f0f0;
+  padding-top: 16px;
+}
 
 .upload-zone {
   border: 2px dashed #d0d7e3;
@@ -318,21 +420,21 @@ async function submit() {
   color: #4f6ef7;
   border: 1px solid #4f6ef7;
   border-radius: 6px;
-  padding: 10px 20px;
-  font-size: 14px;
+  padding: 8px 16px;
+  font-size: 13px;
   font-weight: 500;
   transition: background 0.2s;
 }
 
-.btn-secondary:hover:not(:disabled) { background: #f0f3ff; }
-.btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-secondary:hover { background: #f0f3ff; }
 
 .error-banner {
   background: #fff5f5;
   border: 1px solid #fed7d7;
   color: #c53030;
   border-radius: 6px;
-  padding: 12px 16px;
-  font-size: 14px;
+  padding: 8px 12px;
+  font-size: 13px;
+  margin-top: 8px;
 }
 </style>
