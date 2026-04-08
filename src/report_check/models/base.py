@@ -21,3 +21,7 @@ class BaseModelAdapter(ABC):
     @abstractmethod
     def supports_model_type(self, model_type: ModelType) -> bool:
         pass
+
+    async def close(self):
+        """Release resources (e.g. httpx clients). Override if needed."""
+        pass

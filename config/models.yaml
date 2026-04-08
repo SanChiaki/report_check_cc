@@ -10,3 +10,48 @@ providers:
     multimodal_model: qwen/qwen3-vl-32b-instruct
     multimodal_api_key: ${VISION_API_KEY}
     multimodal_base_url: ${VISION_API_BASE_URL}
+
+  # === 鉴权方式示例 ===
+  #
+  # 1. api_key（默认）— 使用 Bearer {api_key} 鉴权
+  #
+  # 2. dynamic_token — 启动时通过 account + password 调用注册的 token fetcher
+  #    获取动态 token，设置到 Authorization: Bearer {token} 中
+  #    token 默认缓存 300 秒（可通过 token_ttl 调整）
+  #
+  # 注册自定义 token fetcher 示例（在启动代码中导入即可）：
+  #
+  #   from report_check.models.token_fetcher import register_token_fetcher
+  #
+  #   @register_token_fetcher("my_auth")
+  #   async def my_fetcher(account: str, password: str, **kwargs) -> str:
+  #       async with httpx.AsyncClient() as client:
+  #           resp = await client.post("https://auth.example.com/token", json={
+  #               "account": account,
+  #               "password": password,
+  #           })
+  #           resp.raise_for_status()
+  #           return resp.json()["token"]
+  #
+  # 配置示例：
+  #
+  #   dynamic_auth_provider:
+  #     auth_mode: dynamic_token              # 可选: api_key（默认）| dynamic_token
+  #     token_fetcher: my_auth                # 对应 @register_token_fetcher("my_auth")
+  #     token_ttl: 300                        # 动态 token 缓存时间（秒），默认 300
+  #     account: ${AUTH_ACCOUNT}
+  #     password: ${AUTH_PASSWORD}
+  #     text_model: gpt-4o
+  #     text_base_url: https://api.example.com/v1
+  #     multimodal_model: gpt-4o
+  #     multimodal_base_url: https://api.example.com/v1
+  #
+  # 也可以分别为 text/multimodal 配置不同的鉴权方式：
+  #
+  #     text_auth_mode: api_key
+  #     text_api_key: ${TEXT_API_KEY}
+  #     text_base_url: ${TEXT_API_URL}
+  #     multimodal_auth_mode: dynamic_token
+  #     multimodal_account: ${AUTH_ACCOUNT}
+  #     multimodal_password: ${AUTH_PASSWORD}
+  #     multimodal_base_url: https://api.example.com/v1

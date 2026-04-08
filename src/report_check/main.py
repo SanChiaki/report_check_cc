@@ -77,6 +77,11 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # Cleanup: close adapters (httpx clients)
+    for adapter in model_manager._adapters.values():
+        if hasattr(adapter, "close"):
+            await adapter.close()
+
     await app.state.worker.stop()
 
 
