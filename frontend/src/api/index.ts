@@ -60,14 +60,10 @@ export interface Template {
 export async function submitCheck(
   file: File,
   rules: object,
-  reportType?: string,
-  contextVars?: object,
 ): Promise<SubmitResponse> {
   const form = new FormData()
   form.append('file', file)
   form.append('rules', JSON.stringify(rules))
-  if (reportType) form.append('report_type', reportType)
-  if (contextVars) form.append('context_vars', JSON.stringify(contextVars))
 
   const res = await fetch(`${BASE}/check/submit`, { method: 'POST', body: form })
   if (!res.ok) {

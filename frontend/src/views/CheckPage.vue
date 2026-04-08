@@ -50,14 +50,6 @@
       <div v-if="rulesValid === true" class="success-msg">✓ 规则格式正确</div>
     </div>
 
-    <div class="card">
-      <h2 class="section-title">可选参数</h2>
-      <div class="form-row">
-        <label>报告类型</label>
-        <input v-model="reportType" type="text" placeholder="如：交付报告、验收报告" class="form-input" />
-      </div>
-    </div>
-
     <div class="actions">
       <button class="btn-secondary" @click="validateOnly" :disabled="submitting">验证规则</button>
       <button class="btn-primary" @click="submit" :disabled="submitting || !selectedFile || !rulesText.trim()">
@@ -79,7 +71,6 @@ const router = useRouter()
 const fileInput = ref<HTMLInputElement | null>(null)
 const selectedFile = ref<File | null>(null)
 const rulesText = ref('')
-const reportType = ref('')
 const isDragging = ref(false)
 const submitting = ref(false)
 const submitError = ref('')
@@ -173,7 +164,6 @@ async function submit() {
     const res = await submitCheck(
       selectedFile.value,
       parsed,
-      reportType.value || undefined,
     )
     router.push(`/result/${res.task_id}`)
   } catch (e: unknown) {
