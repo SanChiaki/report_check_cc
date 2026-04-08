@@ -15,16 +15,18 @@ def _normalize_base_url(base_url: str | None) -> str | None:
 class OpenAIAdapter(BaseModelAdapter):
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
-        # 分别配置文本模型和多模态模型的 base_url
+        # 分别配置文本模型和多模态模型的 api_key 和 base_url
+        text_api_key = config.get("text_api_key") or config.get("api_key", "")
         text_base_url = config.get("text_base_url") or config.get("base_url")
+        multimodal_api_key = config.get("multimodal_api_key") or config.get("api_key", "")
         multimodal_base_url = config.get("multimodal_base_url") or config.get("base_url")
 
         self.text_client = AsyncOpenAI(
-            api_key=config.get("api_key", ""),
+            api_key=text_api_key,
             base_url=_normalize_base_url(text_base_url)
         )
         self.multimodal_client = AsyncOpenAI(
-            api_key=config.get("api_key", ""),
+            api_key=multimodal_api_key,
             base_url=_normalize_base_url(multimodal_base_url)
         )
 

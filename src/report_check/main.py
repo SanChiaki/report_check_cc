@@ -15,7 +15,6 @@ from report_check.core.config import load_config
 from report_check.core.exceptions import CheckError
 from report_check.models.manager import ModelManager
 from report_check.models.openai_adapter import OpenAIAdapter
-from report_check.models.qwen_adapter import QwenAdapter
 from report_check.storage.artifacts import ArtifactsManager
 from report_check.storage.database import Database
 from report_check.storage.file import FileStorage
@@ -63,10 +62,7 @@ async def lifespan(app: FastAPI):
         default_provider=model_config.get("default_provider", "openai")
     )
     for name, cfg in model_config.get("providers", {}).items():
-        if name == "openai":
-            model_manager.register_adapter(name, OpenAIAdapter(cfg))
-        elif name == "qwen":
-            model_manager.register_adapter(name, QwenAdapter(cfg))
+        model_manager.register_adapter(name, OpenAIAdapter(cfg))
 
     app.state.model_manager = model_manager
 

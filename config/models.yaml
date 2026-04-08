@@ -2,19 +2,11 @@ default_provider: openai
 
 providers:
   openai:
-    api_key: ${OPENAI_API_KEY}
     # 文本模型配置
     text_model: openai/gpt-4o-2024-11-20
+    text_api_key: ${OPENAI_API_KEY}
     text_base_url: ${OPENAI_API_BASE_URL}
     # 多模态模型配置
     multimodal_model: qwen/qwen3-vl-32b-instruct
-    multimodal_base_url: ${OPENAI_API_BASE_URL}
-
-  qwen:
-    api_key: ${QWEN_API_KEY}
-    # 文本模型配置
-    text_model: qwen-turbo
-    text_base_url: ${QWEN_API_BASE_URL}
-    # 多模态模型配置
-    multimodal_model: qwen-vl-plus
-    multimodal_base_url: ${QWEN_API_BASE_URL}
+    multimodal_api_key: ${VISION_API_KEY}
+    multimodal_base_url: ${VISION_API_BASE_URL}

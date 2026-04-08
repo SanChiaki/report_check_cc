@@ -137,6 +137,8 @@ function typeLabel(t: string) {
     api: 'API',
     external_data: '外部数据',
     multimodal_check: '多模态',
+    image_consistency: '配图一致性',
+    signature_compare: '签名对比',
   }
   return map[t] ?? t
 }

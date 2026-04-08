@@ -15,14 +15,14 @@
         <input
           ref="fileInput"
           type="file"
-          accept=".xlsx,.xls,.pdf"
+          accept=".xlsx,.xls,.pdf,.msg"
           style="display:none"
           @change="onFileChange"
         />
         <div v-if="!selectedFile" class="upload-placeholder">
           <div class="upload-icon">📄</div>
           <p>点击或拖拽上传报告文件</p>
-          <p class="upload-hint">支持 Excel (.xlsx / .xls) 和 PDF (.pdf)，最大 20MB</p>
+          <p class="upload-hint">支持 Excel (.xlsx / .xls)、PDF (.pdf) 和邮件 (.msg)，最大 20MB</p>
         </div>
         <div v-else class="upload-selected">
           <span class="file-icon">{{ getFileIcon(selectedFile.name) }}</span>
@@ -94,7 +94,7 @@ function onFileChange(e: Event) {
 function onDrop(e: DragEvent) {
   isDragging.value = false
   const file = e.dataTransfer?.files[0]
-  if (file && (file.name.endsWith('.xlsx') || file.name.endsWith('.xls') || file.name.endsWith('.pdf'))) {
+  if (file && (file.name.endsWith('.xlsx') || file.name.endsWith('.xls') || file.name.endsWith('.pdf') || file.name.endsWith('.msg'))) {
     selectedFile.value = file
   }
 }
@@ -107,6 +107,7 @@ function formatSize(bytes: number) {
 
 function getFileIcon(fileName: string) {
   if (fileName.endsWith('.pdf')) return '📕'
+  if (fileName.endsWith('.msg')) return '✉️'
   if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) return '📊'
   return '📄'
 }

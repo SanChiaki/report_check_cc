@@ -53,6 +53,8 @@
                   <option value="api">API 检查</option>
                   <option value="external_data">外部数据检查</option>
                   <option value="multimodal_check">多模态检查</option>
+                  <option value="image_consistency">配图一致性检查</option>
+                  <option value="signature_compare">签名对比检查</option>
                 </select>
               </div>
               <div class="form-field">
@@ -199,6 +201,63 @@
                 </div>
               </div>
             </template>
+
+            <!-- Image consistency config -->
+            <template v-else-if="rule.type === 'image_consistency'">
+              <div class="config-section">
+                <h3 class="config-title">配图一致性检查配置</h3>
+                <div class="form-field">
+                  <label>检查要求</label>
+                  <textarea
+                    v-model="rule.config.requirement"
+                    class="form-input textarea-sm"
+                    placeholder="检查项的配图是否符合检查项的描述"
+                  />
+                </div>
+                <div class="form-field">
+                  <label>严格模式</label>
+                  <label class="toggle">
+                    <input type="checkbox" v-model="rule.config.strict_mode" />
+                    <span class="toggle-slider" />
+                  </label>
+                </div>
+              </div>
+            </template>
+
+            <!-- Signature compare config -->
+            <template v-else-if="rule.type === 'signature_compare'">
+              <div class="config-section">
+                <h3 class="config-title">签名对比检查配置</h3>
+                <div class="form-field">
+                  <label>签名描述</label>
+                  <input v-model="rule.config.signature_description" type="text" class="form-input" placeholder="客户手写签名" />
+                </div>
+                <div class="form-row-inline">
+                  <div class="form-field">
+                    <label>文件 1 索引</label>
+                    <input v-model.number="rule.config.file1_ref" type="number" class="form-input" placeholder="0（主文件）" min="0" />
+                  </div>
+                  <div class="form-field">
+                    <label>文件 2 索引</label>
+                    <input v-model.number="rule.config.file2_ref" type="number" class="form-input" placeholder="1（附加文件）" min="0" />
+                  </div>
+                </div>
+                <div class="form-row-inline">
+                  <div class="form-field">
+                    <label>网格大小</label>
+                    <input v-model.number="rule.config.grid_size" type="number" class="form-input" placeholder="20" min="10" max="30" />
+                  </div>
+                  <div class="form-field">
+                    <label>边界扩展格子数</label>
+                    <input v-model.number="rule.config.padding_cells" type="number" class="form-input" placeholder="1" min="0" max="3" />
+                  </div>
+                </div>
+                <div class="form-field">
+                  <label>上下文提示（可选）</label>
+                  <input v-model="rule.config.context_hint" type="text" class="form-input" placeholder="签名通常在报告末尾的签字栏" />
+                </div>
+              </div>
+            </template>
           </div>
         </div>
       </div>
@@ -262,6 +321,8 @@ function typeLabel(t: string) {
     api: 'API',
     external_data: '外部数据',
     multimodal_check: '多模态',
+    image_consistency: '配图一致性',
+    signature_compare: '签名对比',
   }
   return map[t] ?? t
 }
@@ -273,6 +334,8 @@ function defaultConfig(type: string): RuleConfig {
   if (type === 'api') return { extract_description: '', api_url: '', method: 'POST' }
   if (type === 'external_data') return { extract_description: '', data_url: '', analysis_requirement: '' }
   if (type === 'multimodal_check') return { requirement: '', context_hint: '' }
+  if (type === 'image_consistency') return { requirement: '检查项的配图是否符合检查项的描述', strict_mode: false }
+  if (type === 'signature_compare') return { file1_ref: 0, file2_ref: 1, signature_description: '客户手写签名', grid_size: 20, padding_cells: 1, context_hint: '' }
   return {}
 }
 
