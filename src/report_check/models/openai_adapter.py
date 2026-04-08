@@ -36,7 +36,8 @@ class OpenAIAdapter(BaseModelAdapter):
     async def call_text_model(self, prompt: str, **kwargs) -> str:
         response = await self.text_client.chat.completions.create(
             model=self.text_model, messages=[{"role": "user", "content": prompt}],
-            temperature=kwargs.get("temperature", 0.1), max_tokens=kwargs.get("max_tokens", 2000))
+            temperature=kwargs.get("temperature", 0.1), max_tokens=kwargs.get("max_tokens", 2000),
+            stream=False)
         return response.choices[0].message.content
 
     async def call_multimodal_model(self, prompt: str, image: bytes, image_format: str = "png",
@@ -59,7 +60,8 @@ class OpenAIAdapter(BaseModelAdapter):
         response = await self.multimodal_client.chat.completions.create(
             model=self.multimodal_model,
             messages=[{"role": "user", "content": content}],
-            temperature=kwargs.get("temperature", 0.1), max_tokens=kwargs.get("max_tokens", 1000))
+            temperature=kwargs.get("temperature", 0.1), max_tokens=kwargs.get("max_tokens", 1000),
+            stream=False)
         return response.choices[0].message.content
 
     def supports_model_type(self, model_type: ModelType) -> bool:
