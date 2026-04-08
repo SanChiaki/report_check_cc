@@ -74,7 +74,7 @@ class TaskArtifacts:
     def _log(self, message: str):
         """追加日志到任务日志文件"""
         timestamp = datetime.now().isoformat()
-        with self._log_path.open("a") as f:
+        with self._log_path.open("a", encoding="utf-8") as f:
             f.write(f"[{timestamp}] {message}\n")
 
     def _write_json(self, path: Path, data: Any, indent: int = 2):

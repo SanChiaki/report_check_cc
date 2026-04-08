@@ -19,6 +19,6 @@ def _resolve_env_vars(obj: Any) -> Any:
 
 def load_config(path: str) -> dict:
     """Load YAML config file with environment variable resolution."""
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     return _resolve_env_vars(raw)

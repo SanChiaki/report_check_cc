@@ -68,7 +68,7 @@ export async function submitCheck(
   rules: object,
 ): Promise<SubmitResponse> {
   const form = new FormData()
-  form.append('file', file)
+  form.append('files', file)
   form.append('rules', JSON.stringify(rules))
 
   const res = await fetch(`${BASE}/check/submit`, { method: 'POST', body: form })
