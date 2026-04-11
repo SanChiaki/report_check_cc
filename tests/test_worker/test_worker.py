@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from pathlib import Path
 
@@ -29,6 +30,57 @@ class TestTaskQueue:
 
 
 class TestBackgroundWorker:
+    @pytest.mark.asyncio
+    async def test_start_creates_multiple_worker_loops(self, db, task_queue):
+        mm = ModelManager(default_provider="fake")
+        worker = BackgroundWorker(
+            db=db,
+            model_manager=mm,
+            task_queue=task_queue,
+            worker_concurrency=2,
+        )
+
+        await worker.start()
+        try:
+            assert len(worker._workers) == 2
+            assert all(not task.done() for task in worker._workers)
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_multiple_workers_process_queue_concurrently(self, db, task_queue):
+        await task_queue.enqueue("t1")
+        await task_queue.enqueue("t2")
+
+        mm = ModelManager(default_provider="fake")
+        worker = BackgroundWorker(
+            db=db,
+            model_manager=mm,
+            task_queue=task_queue,
+            worker_concurrency=2,
+        )
+
+        started: set[str] = set()
+        both_started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def fake_process(task_id: str):
+            started.add(task_id)
+            if len(started) == 2:
+                both_started.set()
+            await release.wait()
+
+        worker._process_task = fake_process  # type: ignore[method-assign]
+
+        await worker.start()
+        try:
+            await asyncio.wait_for(both_started.wait(), timeout=1)
+        finally:
+            release.set()
+            await worker.stop()
+
+        assert started == {"t1", "t2"}
+
     @pytest.mark.asyncio
     async def test_process_text_check_task(self, db, task_queue, sample_excel_path):
         """End-to-end: enqueue a task with text rule, process, verify results."""

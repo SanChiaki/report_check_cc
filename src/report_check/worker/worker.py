@@ -38,13 +38,15 @@ class BackgroundWorker:
         model_manager: ModelManager,
         task_queue: TaskQueue,
         artifacts_manager: ArtifactsManager | None = None,
+        worker_concurrency: int = 1,
     ):
         self.db = db
         self.model_manager = model_manager
         self.task_queue = task_queue
         self.artifacts_manager = artifacts_manager
+        self.worker_concurrency = max(worker_concurrency, 1)
         self._running = False
-        self._task: asyncio.Task | None = None
+        self._workers: list[asyncio.Task] = []
 
     async def start(self):
         self._running = True
@@ -55,18 +57,23 @@ class BackgroundWorker:
             await self.task_queue.enqueue(tid)
             logger.info(f"Re-enqueued recovered task: {tid}")
 
-        self._task = asyncio.create_task(self._run_loop())
+        self._workers = [
+            asyncio.create_task(self._run_loop(index))
+            for index in range(self.worker_concurrency)
+        ]
 
     async def stop(self):
         self._running = False
-        if self._task:
-            self._task.cancel()
+        for worker in self._workers:
+            worker.cancel()
+        for worker in self._workers:
             try:
-                await self._task
+                await worker
             except asyncio.CancelledError:
                 pass
+        self._workers = []
 
-    async def _run_loop(self):
+    async def _run_loop(self, worker_index: int = 0):
         while self._running:
             try:
                 task_id = await self.task_queue.dequeue()
@@ -74,7 +81,7 @@ class BackgroundWorker:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Worker loop error: {e}", exc_info=True)
+                logger.error(f"Worker loop {worker_index} error: {e}", exc_info=True)
 
     async def _process_task(self, task_id: str):
         task = await self.db.get_task(task_id)

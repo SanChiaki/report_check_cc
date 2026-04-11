@@ -44,6 +44,7 @@ async def lifespan(app: FastAPI):
         app_config = {"storage": {"database_path": "data/reports.db", "upload_path": "data/uploads"}}
 
     storage_config = app_config.get("storage", {})
+    execution_config = app_config.get("execution", {})
 
     # Ensure data directories exist
     Path(storage_config.get("database_path", "data/reports.db")).parent.mkdir(parents=True, exist_ok=True)
@@ -51,7 +52,7 @@ async def lifespan(app: FastAPI):
     # Init components
     app.state.db = Database(storage_config.get("database_path", "data/reports.db"))
     app.state.file_storage = FileStorage(storage_config.get("upload_path", "data/uploads"))
-    app.state.task_queue = TaskQueue()
+    app.state.task_queue = TaskQueue(maxsize=execution_config.get("max_waiting_tasks", 10))
 
     # Init artifacts manager
     artifacts_path = storage_config.get("artifacts_path", "data/tasks")
@@ -77,6 +78,7 @@ async def lifespan(app: FastAPI):
         model_manager=model_manager,
         task_queue=app.state.task_queue,
         artifacts_manager=app.state.artifacts_manager,
+        worker_concurrency=execution_config.get("worker_concurrency", 1),
     )
     await app.state.worker.start()
 
