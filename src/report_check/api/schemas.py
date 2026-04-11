@@ -50,6 +50,10 @@ class CheckResultResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     queue_size: int
+    running_tasks: int = 0
+    model_inflight: int = 0
+    model_text_inflight: int = 0
+    model_multimodal_inflight: int = 0
     version: str
 
 

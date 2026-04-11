@@ -41,9 +41,14 @@ MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check(request: Request):
+    model_stats = request.app.state.model_manager.get_inflight_stats()
     return HealthResponse(
         status="ok",
         queue_size=request.app.state.task_queue.size(),
+        running_tasks=request.app.state.worker.running_tasks,
+        model_inflight=model_stats["model_inflight"],
+        model_text_inflight=model_stats["model_text_inflight"],
+        model_multimodal_inflight=model_stats["model_multimodal_inflight"],
         version="1.0.0",
     )
 

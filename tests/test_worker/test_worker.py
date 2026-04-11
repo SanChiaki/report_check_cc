@@ -188,6 +188,42 @@ class TestBackgroundWorker:
         assert [result["status"] for result in results] == ["error", "passed"]
 
     @pytest.mark.asyncio
+    async def test_process_task_offloads_parse_work_to_thread(
+        self,
+        db,
+        task_queue,
+        sample_excel_path,
+        monkeypatch,
+    ):
+        rules = {
+            "rules": [
+                {"id": "r1", "name": "check keyword", "type": "text",
+                 "config": {"keywords": ["交付内容"], "match_mode": "any"}}
+            ]
+        }
+        await db.create_task(
+            task_id="t-thread",
+            file_name="test.xlsx",
+            file_path=str(sample_excel_path),
+            rules=rules,
+        )
+
+        to_thread_calls = []
+        real_to_thread = asyncio.to_thread
+
+        async def recording_to_thread(func, *args, **kwargs):
+            to_thread_calls.append(getattr(func, "__name__", repr(func)))
+            return await real_to_thread(func, *args, **kwargs)
+
+        monkeypatch.setattr("report_check.worker.worker.asyncio.to_thread", recording_to_thread)
+
+        mm = ModelManager(default_provider="fake")
+        worker = BackgroundWorker(db=db, model_manager=mm, task_queue=task_queue)
+        await worker._process_task("t-thread")
+
+        assert to_thread_calls
+
+    @pytest.mark.asyncio
     async def test_process_text_check_task(self, db, task_queue, sample_excel_path):
         """End-to-end: enqueue a task with text rule, process, verify results."""
         rules = {

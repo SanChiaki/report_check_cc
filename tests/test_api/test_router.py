@@ -27,6 +27,10 @@ class TestHealthEndpoint:
         data = resp.json()
         assert data["status"] == "ok"
         assert "queue_size" in data
+        assert "running_tasks" in data
+        assert "model_inflight" in data
+        assert "model_text_inflight" in data
+        assert "model_multimodal_inflight" in data
         assert "version" in data
 
 

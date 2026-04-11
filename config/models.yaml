@@ -2,6 +2,9 @@ default_provider: openai
 
 providers:
   openai:
+    max_concurrency: 3
+    text_max_concurrency: 2
+    multimodal_max_concurrency: 1
     # 文本模型配置
     text_model: qwen/qwen3-vl-32b-instruct
     text_api_key: ${OPENAI_API_KEY}

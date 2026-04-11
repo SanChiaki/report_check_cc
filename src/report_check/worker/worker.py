@@ -50,6 +50,8 @@ class BackgroundWorker:
         self.per_task_rule_concurrency = max(per_task_rule_concurrency, 1)
         self._running = False
         self._workers: list[asyncio.Task] = []
+        self._running_tasks = 0
+        self._running_tasks_lock = asyncio.Lock()
 
     async def start(self):
         self._running = True
@@ -80,11 +82,21 @@ class BackgroundWorker:
         while self._running:
             try:
                 task_id = await self.task_queue.dequeue()
-                await self._process_task(task_id)
+                async with self._running_tasks_lock:
+                    self._running_tasks += 1
+                try:
+                    await self._process_task(task_id)
+                finally:
+                    async with self._running_tasks_lock:
+                        self._running_tasks = max(0, self._running_tasks - 1)
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Worker loop {worker_index} error: {e}", exc_info=True)
+
+    @property
+    def running_tasks(self) -> int:
+        return self._running_tasks
 
     async def _process_task(self, task_id: str):
         task = await self.db.get_task(task_id)
@@ -122,7 +134,7 @@ class BackgroundWorker:
             else:
                 parser = ExcelParser(artifacts=artifacts)
 
-            report_data = parser.parse(file_path)
+            report_data = await asyncio.to_thread(parser.parse, file_path)
 
             # Parse extra files
             extra_report_data = []
@@ -134,7 +146,7 @@ class BackgroundWorker:
                         extra_parser = MSGParser()
                     else:
                         extra_parser = ExcelParser(artifacts=artifacts)
-                    extra_data = extra_parser.parse(extra_path)
+                    extra_data = await asyncio.to_thread(extra_parser.parse, extra_path)
                     extra_report_data.append(extra_data)
                     logger.info(f"Parsed extra file: {extra_path}")
                 except Exception as e:
