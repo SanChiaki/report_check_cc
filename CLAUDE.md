@@ -1,182 +1,176 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## 项目概述
 
-AI 驱动的 Excel/PDF/MSG 报告一致性检查系统，支持七种检查类型：文本、语义、图片、多模态、签名对比、API 和外部数据验证。支持邮件（.msg）文件检查，报告内容可在邮件正文或附件（PDF/Excel）中。
+AI 驱动的 Excel/PDF/MSG 报告一致性检查系统。用户上传一个或多个报告文件和规则 DSL，后端异步解析文件、执行规则、持久化结果，前端轮询展示检查进度与结果。
 
-## 开发命令
+当前支持 8 种检查类型：`text`、`semantic`、`image`、`multimodal_check`、`image_consistency`、`signature_compare`、`api`、`external_data`。
 
-**后端开发：**
+邮件 `.msg` 是一等输入格式：系统会同时解析邮件正文和附件（PDF/Excel），并把附件内容映射到统一的 `ReportData` 结构里。
+
+## 常用命令
+
+### 后端
+
 ```bash
-uv sync                                    # 安装依赖
-uv run uvicorn report_check.main:app --reload  # 启动开发服务器 (http://localhost:8000)
-uv run pytest                              # 运行全部测试
-uv run pytest tests/test_specific.py       # 运行单个测试文件
-uv run pytest tests/test_specific.py::test_function_name  # 运行单个测试函数
+uv sync
+uv run uvicorn report_check.main:app --reload
+uv run pytest
+uv run pytest tests/test_api/test_router.py
+uv run pytest tests/test_api/test_router.py::test_function_name
 ```
 
-**前端开发：**
+### 前端
+
 ```bash
-cd frontend && npm install                 # 安装依赖
-cd frontend && npm run dev                 # 启动开发服务器 (http://localhost:5173)
+cd frontend && npm install
+cd frontend && npm run dev
+cd frontend && npm run build
 ```
 
-**Docker 部署（仅后端）：**
+### Docker
+
 ```bash
-cp .env.example .env                       # 配置环境变量（必须包含 OPENAI_API_BASE_URL）
-docker compose up -d                       # 后台启动后端服务
-docker compose logs -f app                 # 查看后端日志
-docker compose down                        # 停止服务
+cp .env.example .env
+docker compose up -d
+docker compose logs -f app
+docker compose down
 ```
 
-**前端独立部署：**
-```bash
-cd frontend
-npm install
-npm run build                              # 构建生产版本到 dist/
-# 将 dist/ 目录部署到 Nginx、CDN 或其他静态托管服务
+## 代码结构与架构
+
+### 1. 应用入口与运行时装配
+
+`src/report_check/main.py` 在 FastAPI 生命周期里完成整套运行时装配：
+- 读取 `config/models.yaml` 和 `config/app.yaml`
+- 初始化 `Database`、`FileStorage`、`TaskQueue`、`ArtifactsManager`
+- 构建 `ModelManager` 并注册各 provider adapter
+- 启动 `BackgroundWorker`
+
+这意味着多数后端行为不是请求内同步完成，而是“API 接收任务 + Worker 异步消费任务”。
+
+### 2. API 层只负责校验、入库、入队
+
+`src/report_check/api/router.py` 负责：
+- 校验上传文件类型和大小（Excel/PDF/MSG，20MB 上限）
+- 解析规则 DSL / `context_vars`
+- 保存主文件和额外文件
+- 创建任务并写入 SQLite
+- 将 `task_id` 放入内存队列
+- 提供结果查询、模板查询、artifacts 浏览/下载接口
+
+关键点：`/api/v1/check/submit` 只提交任务，不直接执行检查；前端通过 `/api/v1/check/result/{task_id}` 轮询结果。
+
+### 3. Worker 是核心业务编排层
+
+`src/report_check/worker/worker.py` 是后端主流程核心，顺序大致是：
+1. 从 `TaskQueue` 取任务
+2. 根据文件类型选择 `ExcelParser` / `PDFParser` / `MSGParser`
+3. 对扫描 PDF 按需触发视觉 OCR，把识别文本补回 `report_data`
+4. 通过 `RuleEngine` 合并规则，并用 `VariableResolver` 解析 `${task_id}` 之类变量
+5. 用 `CheckerFactory` 为每条规则创建 checker
+6. 执行检查，收集 `CheckResult`
+7. 写入数据库并保存 artifacts
+
+另外这里还承担了几个系统级策略：
+- 启动时恢复 orphaned `processing` 任务
+- API / external_data 规则的简单熔断（同一 API 连续失败 3 次后跳过）
+- 任务级过程文件落盘
+
+### 4. 统一数据通路：先解析为 ReportData，再交给 checker
+
+解析器位于 `src/report_check/parser/`：
+- `excel.py`：解析工作表内容和嵌入图片
+- `pdf.py`：普通 PDF 走文本/图片提取，扫描件可走页面渲染与视觉 OCR
+- `msg.py`：提取邮件元数据、正文和附件内容
+- `renderer.py`：把报告渲染成页面图片，供多模态类 checker 使用
+
+核心思路是把不同输入格式统一为 `ReportData`，这样 checker 不直接关心原始文件格式，而是消费统一的内容块与图片集合。
+
+### 5. Checker 体系是扩展点
+
+所有 checker 都继承 `BaseChecker`，并通过 `CheckerFactory` 注册和创建。当前映射在 `src/report_check/checkers/factory.py`。
+
+现有 checker 分工：
+- `text`：关键词/字段级文本匹配
+- `semantic`：文本语义理解
+- `image`：单图内容是否满足要求
+- `multimodal_check`：基于整页渲染图理解报告结构与图文关系
+- `image_consistency`：检查项描述与配图是否一致
+- `signature_compare`：跨文件签名定位、裁切、比对
+- `api` / `external_data`：调用外部接口校验报告内容
+
+新增检查类型时，按当前约定应：
+1. 新建 checker 并继承 `BaseChecker`
+2. 实现 `check(rule_config)`
+3. 在 `CheckerFactory` 注册
+4. 如有新增 DSL 类型，同步更新规则校验逻辑
+
+### 6. 规则系统分为三层
+
+规则相关逻辑在 `src/report_check/engine/`：
+- `validator.py`：校验 DSL 基本结构与 rule type 合法性
+- `rule_engine.py`：合并基础规则和用户规则，并过滤 `enabled: false`
+- `variable_resolver.py`：解析规则配置中的变量引用
+
+规则 DSL 顶层格式：
+
+```json
+{
+  "rules": [
+    {
+      "id": "r1",
+      "name": "...",
+      "type": "text|semantic|image|multimodal_check|image_consistency|signature_compare|api|external_data",
+      "config": {}
+    }
+  ]
+}
 ```
 
-**注意事项：**
-- Docker 仅包含后端服务（端口 8000）
-- 前端需要独立部署，通过环境变量或构建时配置指向后端 API 地址
-- 后端已配置 CORS，支持跨域访问
-- 本地开发时前端使用 Vite 代理（`npm run dev`），生产环境直接请求后端
+### 7. 模型调用统一走 ModelManager
 
-## 架构设计
+不要在业务代码里直接调用 OpenAI/Qwen SDK。统一通过 `src/report_check/models/manager.py` 暴露的：
+- `call_text_model()`
+- `call_multimodal_model()`
 
-### 核心组件
+`ModelManager` 负责按 provider 查找 adapter，并做带退避的重试。当前运行时默认注册的是 `OpenAIAdapter`，但配置层已经按“provider + adapter”模式组织，可以继续扩展。
 
-1. **CheckerFactory + BaseChecker 模式**
-   - 所有检查器继承 `BaseChecker` (src/report_check/checkers/base.py)
-   - 通过 `CheckerFactory.create(type, ...)` 创建检查器实例
-   - 八种检查器：TextChecker, SemanticChecker, ImageChecker, MultimodalChecker, SignatureChecker, ImageConsistencyChecker, ApiChecker, ExternalDataChecker
-   - 每个检查器返回 `CheckResult` 数据类
+### 8. 存储分两类：任务状态 + 过程证据
 
-2. **异步任务队列架构**
-   - `TaskQueue` (worker/queue.py): 内存队列，使用 asyncio.Queue
-   - `BackgroundWorker` (worker/worker.py): 后台工作进程，启动时自动恢复孤儿任务
-   - `Database` (storage/database.py): SQLite 存储，跟踪任务状态 (pending/processing/completed/failed)
-   - 任务提交流程：API → 创建任务 → 入队 → Worker 处理 → 更新结果
+- `src/report_check/storage/database.py`：SQLite，保存任务、结果、规则模板
+- `src/report_check/storage/artifacts.py`：把任务执行过程保存到 `data/tasks/{task_id}/`
 
-3. **规则引擎**
-   - `RuleEngine` (engine/rule_engine.py): 合并基础规则和用户规则，过滤禁用规则
-   - `VariableResolver` (engine/variable_resolver.py): 解析规则配置中的变量引用 (如 `${task_id}`)
-   - 规则 DSL 格式：`{"rules": [{"id": "r1", "name": "...", "type": "text|semantic|image|multimodal_check|image_consistency|signature_compare|api|external_data", "config": {...}}]}`
+artifacts 目录按阶段划分：
+- `0_upload/` 原始上传文件
+- `1_parsed/` 解析结果和抽取图片
+- `2_rules/` 用户规则、合并后规则、变量解析后规则
+- `3_checks/` 每条规则的执行细节
+- `4_ai_calls/` AI 请求/响应记录
+- `5_result/` 最终结果与汇总
 
-4. **AI 模型管理**
-   - `ModelManager` (models/manager.py): 统一接口，支持多提供商
-   - `OpenAIAdapter`: 适配器模式，支持分别配置文本模型和多模态模型的 base_url
-   - 配置文件：config/models.yaml，支持环境变量替换
+如果要排查“模型为什么这么判”“定位是否错了”，优先看 artifacts，而不是只看接口返回值。
 
-5. **文件解析器**
-   - `PDFParser` (parser/pdf.py): 混合解析方案
-     - 正常 PDF：使用 pdfplumber 提取文本和嵌入图片
-     - 扫描件 PDF：使用 PyMuPDF 渲染页面为图片（无文字层时自动切换）
-     - 图片压缩：`parser/utils.py` 限制 2048x2048 像素，2MB 大小
-   - `ExcelParser` (parser/excel.py): 解析 Excel 工作表和嵌入图片
-   - `MSGParser` (parser/msg.py): 解析邮件文件
-     - 提取邮件正文（主题、发件人、收件人、日期、正文内容）
-     - 自动解析附件（支持 PDF 和 Excel 附件）
-     - 统一输出为 ReportData 格式，附件内容位置标记为 `attachment:{文件名}:{原位置}`
+### 9. 前端是轻量三页应用
 
-6. **报告渲染 (ReportRenderer)**
-   - `ReportRenderer` (parser/renderer.py): 将报告转换为图片供多模态分析
-   - Excel：优先使用 LibreOffice (`soffice --headless --convert-to pdf`) 转换为 PDF，再用 PyMuPDF 渲染为图片；LibreOffice 不可用时回退到 PIL 渲染
-   - PDF：使用 PyMuPDF 渲染页面为图片
-   - 支持已解析的页面图片复用
+`frontend/src/router/index.ts` 当前只有 3 个页面：
+- `/`：`CheckPage.vue`，上传文件、选择模板、编辑规则并提交任务
+- `/result/:taskId`：`ResultPage.vue`，轮询任务状态并展示结果
+- `/rules`：`RuleConfig.vue`，规则可视化编辑
 
-7. **多模态检查 (MultimodalChecker)**
-   - `MultimodalChecker` (checkers/multimodal.py): 整体分析报告结构（文本+图片）
-   - 使用多模态 AI 理解动态内容（如质检项列表）
-   - 适用于：质检报告（检查每个质检项是否有对应照片）、结构化列表验证
-   - 自动渲染报告为图片后调用多模态模型分析
-
-8. **配图一致性检查 (ImageConsistencyChecker)**
-   - `ImageConsistencyChecker` (checkers/image_consistency.py): 验证检查项的配图是否符合其描述
-   - 自主识别检查项：AI 自动分析报告内容，识别所有包含配图的检查项（不限制命名方式）
-   - 配图定位：自动匹配每个检查项对应的图片
-   - 智能判断：使用多模态 AI 判断图片内容是否与检查项描述相符
-   - 配置参数：
-     - `requirement`: 检查要求描述（默认："检查项的配图是否符合检查项的描述"）
-     - `strict_mode`: 严格模式（默认：false，为 true 时要求所有项都通过）
-   - 适用于：质检报告配图审核、检查表单图片验证、审计报告附件检查
-
-9. **签名对比检查 (SignatureChecker)**
-   - `SignatureChecker` (checkers/signature.py): 跨文件签名对比，验证是否同一人签名
-   - 网格编号法：将图片划分为 NxN 网格（默认 20x20），AI 返回边界格子（如 C15-D15）而非像素坐标
-   - 边界格子定位：AI 返回 top_left_cell 和 bottom_right_cell，相比像素坐标精度提升 2 倍
-   - 可配置 padding：支持向外扩展 N 个格子（默认 1）确保完整覆盖签名
-   - 网格可视化：红色列标签（A-T）、蓝色行标签（1-20）、灰色网格线，保存为 artifacts 便于调试
-   - 签名裁切：基于 AI 返回的格子范围裁切签名图片，保存为证据
-   - 多模态对比：将两张裁切后的签名图发送给 AI 判断是否同一人
-   - 适用于：合同签名验证、报告签名一致性检查
-
-9. **容错机制**
-   - 孤儿任务恢复：启动时自动重新入队未完成的 processing 任务
-   - API 熔断器：同一 API 连续失败 3 次后跳过后续调用
-   - AI 调用重试：locate_content 方法最多重试 3 次
-
-10. **过程文件管理 (Artifacts)**
-   - `ArtifactsManager` (storage/artifacts.py): 管理任务过程文件的保存和查询
-   - 每个任务拥有独立文件夹：`data/tasks/{task_id}/`
-   - 目录结构：
-     - `0_upload/`: 原始上传文件
-     - `1_parsed/`: 解析后的数据（包括提取的图片和页面）
-     - `2_rules/`: 规则配置（用户规则、合并后规则、解析后规则）
-     - `3_checks/`: 每个检查规则的详细执行记录
-     - `4_ai_calls/`: AI 调用的请求和响应记录
-     - `5_result/`: 最终结果
-   - API 接口：
-     - `GET /api/v1/tasks/{task_id}/artifacts` - 列出任务的所有过程文件
-     - `GET /api/v1/tasks/{task_id}/artifacts/download` - 下载所有过程文件为 zip
-     - `GET /api/v1/tasks/{task_id}/artifacts/{file_path}` - 获取单个文件
-
-### 数据流
-
-```
-用户上传 Excel/PDF/MSG + 规则 DSL
-  ↓
-FastAPI 接收 (api/router.py)
-  ↓
-创建任务并入队 (worker/queue.py)
-  ↓
-BackgroundWorker 处理 (worker/worker.py)
-  ├─ ExcelParser/PDFParser/MSGParser 解析文件 (parser/)
-  │  └─ MSGParser 自动解析邮件正文和附件（PDF/Excel）
-  ├─ RuleEngine 合并规则 (engine/rule_engine.py)
-  ├─ VariableResolver 解析变量 (engine/variable_resolver.py)
-  ├─ CheckerFactory 创建检查器 (checkers/factory.py)
-  └─ 执行检查并保存结果 (storage/database.py)
-  ↓
-前端轮询获取结果 (/api/v1/check/result/{task_id})
-```
+前端本身业务较薄，主要职责是把规则 DSL 与文件上传给后端，并把异步任务状态可视化。
 
 ## 重要约定
 
-1. **检查器开发**：新增检查器需继承 `BaseChecker`，实现 `check(rule_config)` 方法，并在 `CheckerFactory` 注册
-2. **AI 调用**：使用 `model_manager.call_text_model()` 或 `call_multimodal_model()`，不要直接调用 OpenAI/Qwen API
-3. **位置定位**：使用 `BaseChecker.locate_content(description)` 让 AI 在报告中定位内容
-4. **错误处理**：检查器异常应返回 `CheckResult(status="error", message="...")`，不要抛出异常
-5. **配置管理**：环境变量通过 config/models.yaml 和 .env 管理，使用 `${VAR_NAME}` 语法
+1. 新增 checker 时，优先复用 `ReportData`、`BaseChecker`、`ModelManager` 这条主链路，不要绕开工厂和模型管理层。
+2. 需要 AI 定位内容时，优先使用 `BaseChecker.locate_content(...)` 的既有机制，不要在各 checker 内重复实现定位流程。
+3. checker 内部发生异常时，应返回 `CheckResult(status="error", ...)`，不要把异常直接抛到 worker 顶层。
+4. 新增 rule type 时，除了注册 checker，还要同步更新 API 校验中的合法类型列表。
+5. 与任务排查相关的问题，先看 `data/tasks/{task_id}/` 下的 artifacts，再决定是否需要加日志。
 
-## 模型配置
+## 配置与环境变量
 
-支持分别配置文本模型和多模态模型的 base_url：
+模型配置在 `config/models.yaml`，应用配置在 `config/app.yaml`。
 
-```yaml
-providers:
-  openai:
-    api_key: ${OPENAI_API_KEY}
-    text_model: gpt-4o
-    text_base_url: ${TEXT_API_URL}        # 文本模型专属
-    multimodal_model: gpt-4o
-    multimodal_base_url: ${VISION_API_URL}  # 多模态模型专属
-```
-
-## 环境变量
+常见环境变量：
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
@@ -186,8 +180,15 @@ providers:
 | `QWEN_API_BASE_URL` | Qwen API 基础 URL | - |
 | `MODEL_PROVIDER` | 默认模型提供商 | `openai` |
 
+`config/app.yaml` 当前还定义了这些关键运行参数：
+- SQLite 路径：`data/reports.db`
+- 上传目录：`data/uploads`
+- 默认限流：`10/minute`
+- 文件大小/单元格/图片数量限制
+
 ## 开发注意事项
 
 **关闭开发服务器：**
-- `uv run uvicorn` 启动的链路是 `uv run → python .venv/bin/uvicorn`，`pkill -f "uvicorn"` 只会杀掉 `uv run` 父进程，子进程会继续存活
-- 正确做法：`ps aux | grep uvicorn` 确认所有相关进程，然后用 `kill -9` 逐个指定 PID 清理，确认 `ps` 无残留后再重启
+- `uv run uvicorn` 启动链路是 `uv run → python .venv/bin/uvicorn`
+- `pkill -f "uvicorn"` 只会杀掉 `uv run` 父进程，子进程可能继续存活
+- 正确做法是先 `ps aux | grep uvicorn` 确认 PID，再逐个清理并确认无残留后重启
