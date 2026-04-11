@@ -79,6 +79,7 @@ async def lifespan(app: FastAPI):
         task_queue=app.state.task_queue,
         artifacts_manager=app.state.artifacts_manager,
         worker_concurrency=execution_config.get("worker_concurrency", 1),
+        per_task_rule_concurrency=execution_config.get("per_task_rule_concurrency", 1),
     )
     await app.state.worker.start()
 

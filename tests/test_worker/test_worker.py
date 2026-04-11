@@ -2,6 +2,8 @@ import asyncio
 import pytest
 from pathlib import Path
 
+from report_check.checkers.base import CheckResult
+from report_check.checkers.factory import CheckerFactory
 from report_check.storage.database import Database, TaskStatus
 from report_check.worker.queue import TaskQueue
 from report_check.worker.worker import BackgroundWorker
@@ -80,6 +82,110 @@ class TestBackgroundWorker:
             await worker.stop()
 
         assert started == {"t1", "t2"}
+
+    @pytest.mark.asyncio
+    async def test_process_task_runs_rules_concurrently_and_preserves_result_order(
+        self,
+        db,
+        task_queue,
+        sample_excel_path,
+        monkeypatch,
+    ):
+        rules = {
+            "rules": [
+                {"id": "r1", "name": "first", "type": "text", "config": {"delay": 0.05, "message": "first"}},
+                {"id": "r2", "name": "second", "type": "text", "config": {"delay": 0.0, "message": "second"}},
+                {"id": "r3", "name": "third", "type": "text", "config": {"delay": 0.01, "message": "third"}},
+            ]
+        }
+        await db.create_task(
+            task_id="t-concurrent",
+            file_name="test.xlsx",
+            file_path=str(sample_excel_path),
+            rules=rules,
+        )
+
+        inflight = 0
+        max_inflight = 0
+        inflight_lock = asyncio.Lock()
+
+        class FakeChecker:
+            async def check(self, rule_config):
+                nonlocal inflight, max_inflight
+                async with inflight_lock:
+                    inflight += 1
+                    max_inflight = max(max_inflight, inflight)
+                await asyncio.sleep(rule_config["delay"])
+                async with inflight_lock:
+                    inflight -= 1
+                return CheckResult(status="passed", message=rule_config["message"])
+
+        monkeypatch.setattr(
+            CheckerFactory,
+            "create",
+            lambda *args, **kwargs: FakeChecker(),
+        )
+
+        mm = ModelManager(default_provider="fake")
+        worker = BackgroundWorker(
+            db=db,
+            model_manager=mm,
+            task_queue=task_queue,
+            per_task_rule_concurrency=2,
+        )
+        await worker._process_task("t-concurrent")
+
+        results = await db.get_check_results("t-concurrent")
+        assert max_inflight == 2
+        assert [result["message"] for result in results] == ["first", "second", "third"]
+
+    @pytest.mark.asyncio
+    async def test_rule_exception_becomes_error_result_without_failing_task(
+        self,
+        db,
+        task_queue,
+        sample_excel_path,
+        monkeypatch,
+    ):
+        rules = {
+            "rules": [
+                {"id": "r1", "name": "boom", "type": "text", "config": {"raise_error": True}},
+                {"id": "r2", "name": "ok", "type": "text", "config": {"message": "ok"}},
+            ]
+        }
+        await db.create_task(
+            task_id="t-rule-error",
+            file_name="test.xlsx",
+            file_path=str(sample_excel_path),
+            rules=rules,
+        )
+
+        class FakeChecker:
+            async def check(self, rule_config):
+                if rule_config.get("raise_error"):
+                    raise RuntimeError("boom")
+                return CheckResult(status="passed", message=rule_config["message"])
+
+        monkeypatch.setattr(
+            CheckerFactory,
+            "create",
+            lambda *args, **kwargs: FakeChecker(),
+        )
+
+        mm = ModelManager(default_provider="fake")
+        worker = BackgroundWorker(
+            db=db,
+            model_manager=mm,
+            task_queue=task_queue,
+            per_task_rule_concurrency=2,
+        )
+        await worker._process_task("t-rule-error")
+
+        task = await db.get_task("t-rule-error")
+        results = await db.get_check_results("t-rule-error")
+
+        assert task["status"] == "completed"
+        assert [result["status"] for result in results] == ["error", "passed"]
 
     @pytest.mark.asyncio
     async def test_process_text_check_task(self, db, task_queue, sample_excel_path):

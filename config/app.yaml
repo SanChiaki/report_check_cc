@@ -9,6 +9,7 @@ storage:
 execution:
   max_waiting_tasks: 10
   worker_concurrency: 2
+  per_task_rule_concurrency: 5
 
 limits:
   max_file_size_mb: 20

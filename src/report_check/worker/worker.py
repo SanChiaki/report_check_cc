@@ -4,6 +4,7 @@ import logging
 import time
 from pathlib import Path
 
+from report_check.checkers.base import CheckResult
 from report_check.checkers.factory import CheckerFactory
 from report_check.engine.rule_engine import RuleEngine
 from report_check.engine.variable_resolver import VariableResolver
@@ -39,12 +40,14 @@ class BackgroundWorker:
         task_queue: TaskQueue,
         artifacts_manager: ArtifactsManager | None = None,
         worker_concurrency: int = 1,
+        per_task_rule_concurrency: int = 1,
     ):
         self.db = db
         self.model_manager = model_manager
         self.task_queue = task_queue
         self.artifacts_manager = artifacts_manager
         self.worker_concurrency = max(worker_concurrency, 1)
+        self.per_task_rule_concurrency = max(per_task_rule_concurrency, 1)
         self._running = False
         self._workers: list[asyncio.Task] = []
 
@@ -209,89 +212,13 @@ class BackgroundWorker:
                 artifacts.save_resolved_rules(resolved_rules)
 
             # Step 3: Execute checks
-            results = []
-            api_failure_counts: dict[str, int] = {}
-
-            for i, rule in enumerate(resolved_rules):
-                progress = 20 + int((i / max(len(resolved_rules), 1)) * 70)
-                await self.db.update_task_progress(task_id, progress)
-
-                start = time.time()
-
-                # Check circuit breaker for API rules
-                rule_type = rule["type"]
-                if rule_type in ("api", "external_data"):
-                    api_name = rule.get("config", {}).get("api", {}).get("name") or \
-                               rule.get("config", {}).get("external_api", {}).get("name", "")
-                    if api_failure_counts.get(api_name, 0) >= 3:
-                        result_data = {
-                            "rule_id": rule["id"],
-                            "rule_name": rule["name"],
-                            "rule_type": rule_type,
-                            "status": "error",
-                            "location": {},
-                            "message": f"API {api_name} 连续失败，已跳过",
-                            "suggestion": "",
-                            "example": "",
-                            "confidence": 0,
-                            "execution_time": 0,
-                        }
-                        results.append(result_data)
-
-                        # Save skipped check artifact
-                        if artifacts:
-                            check_artifact = artifacts.init_check_artifact(rule["id"], rule_type, rule["name"])
-                            check_artifact.save_config(rule.get("config", {}))
-                            check_artifact.save_result(result_data)
-                        continue
-
-                # Initialize check artifact
-                check_artifact = None
-                if artifacts:
-                    check_artifact = artifacts.init_check_artifact(rule["id"], rule_type, rule["name"])
-                    check_artifact.save_config(rule.get("config", {}))
-
-                # Create checker with artifact support
-                checker = CheckerFactory.create(
-                    rule_type, report_data, self.model_manager,
-                    artifacts=check_artifact,
-                    extra_report_data=extra_report_data,
-                )
-
-                check_result = checker.check(rule["config"])
-                if asyncio.iscoroutine(check_result):
-                    result = await check_result
-                else:
-                    result = check_result
-                result.rule_id = rule["id"]
-                result.rule_name = rule["name"]
-                result.rule_type = rule_type
-                result.execution_time = time.time() - start
-
-                # Track API failures
-                if result.status == "error" and rule_type in ("api", "external_data"):
-                    api_name = rule.get("config", {}).get("api", {}).get("name") or \
-                               rule.get("config", {}).get("external_api", {}).get("name", "")
-                    api_failure_counts[api_name] = api_failure_counts.get(api_name, 0) + 1
-
-                result_data = {
-                    "rule_id": result.rule_id,
-                    "rule_name": result.rule_name,
-                    "rule_type": result.rule_type,
-                    "status": result.status,
-                    "location": _serialize_location(result.location),
-                    "message": result.message,
-                    "suggestion": result.suggestion,
-                    "example": result.example,
-                    "confidence": result.confidence,
-                    "execution_time": result.execution_time,
-                    "details": result.details,
-                }
-                results.append(result_data)
-
-                # Save check result to artifact
-                if check_artifact:
-                    check_artifact.save_result(result_data)
+            results = await self._execute_rules(
+                task_id=task_id,
+                resolved_rules=resolved_rules,
+                report_data=report_data,
+                extra_report_data=extra_report_data,
+                artifacts=artifacts,
+            )
 
             # Step 4: Save results
             await self.db.update_task_progress(task_id, 95)
@@ -324,3 +251,97 @@ class BackgroundWorker:
                     "status": "failed",
                     "error": str(e),
                 })
+
+    async def _execute_rules(
+        self,
+        task_id: str,
+        resolved_rules: list[dict],
+        report_data,
+        extra_report_data: list,
+        artifacts: TaskArtifacts | None,
+    ) -> list[dict]:
+        if not resolved_rules:
+            return []
+
+        results: list[dict | None] = [None] * len(resolved_rules)
+        semaphore = asyncio.Semaphore(self.per_task_rule_concurrency)
+        progress_lock = asyncio.Lock()
+        completed_count = 0
+
+        async def run_rule(index: int, rule: dict):
+            nonlocal completed_count
+
+            async with semaphore:
+                start = time.time()
+                rule_type = rule["type"]
+                check_artifact = None
+
+                if artifacts:
+                    check_artifact = artifacts.init_check_artifact(
+                        rule["id"],
+                        rule_type,
+                        rule["name"],
+                    )
+                    check_artifact.save_config(rule.get("config", {}))
+
+                try:
+                    checker = CheckerFactory.create(
+                        rule_type,
+                        report_data,
+                        self.model_manager,
+                        artifacts=check_artifact,
+                        extra_report_data=extra_report_data,
+                    )
+
+                    check_result = checker.check(rule["config"])
+                    if asyncio.iscoroutine(check_result):
+                        result = await check_result
+                    else:
+                        result = check_result
+                except Exception as exc:
+                    logger.error(
+                        "Rule %s failed during execution: %s",
+                        rule["id"],
+                        exc,
+                        exc_info=True,
+                    )
+                    result = CheckResult(
+                        status="error",
+                        message=str(exc),
+                        confidence=0.0,
+                    )
+
+                result.rule_id = rule["id"]
+                result.rule_name = rule["name"]
+                result.rule_type = rule_type
+                result.execution_time = time.time() - start
+
+                result_data = {
+                    "rule_id": result.rule_id,
+                    "rule_name": result.rule_name,
+                    "rule_type": result.rule_type,
+                    "status": result.status,
+                    "location": _serialize_location(result.location),
+                    "message": result.message,
+                    "suggestion": result.suggestion,
+                    "example": result.example,
+                    "confidence": result.confidence,
+                    "execution_time": result.execution_time,
+                    "details": result.details,
+                }
+                results[index] = result_data
+
+                if check_artifact:
+                    check_artifact.save_result(result_data)
+
+                async with progress_lock:
+                    completed_count += 1
+                    progress = 20 + int((completed_count / len(resolved_rules)) * 70)
+
+                await self.db.update_task_progress(task_id, progress)
+
+        await asyncio.gather(
+            *(run_rule(index, rule) for index, rule in enumerate(resolved_rules))
+        )
+
+        return [result for result in results if result is not None]
