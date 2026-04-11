@@ -9,7 +9,11 @@ from report_check.main import app
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_API_BASE_URL", "https://example.com/v1")
+    monkeypatch.setenv("VISION_API_KEY", "test-key")
+    monkeypatch.setenv("VISION_API_BASE_URL", "https://example.com/v1")
     with TestClient(app) as c:
         yield c
 

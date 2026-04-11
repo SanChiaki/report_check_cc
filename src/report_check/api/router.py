@@ -120,7 +120,16 @@ async def submit_check(
     )
 
     # Enqueue
-    await request.app.state.task_queue.enqueue(task_id)
+    if not request.app.state.task_queue.try_enqueue(task_id):
+        try:
+            await request.app.state.db.delete_task(task_id)
+        finally:
+            await request.app.state.file_storage.cleanup_task_files(task_id)
+        raise HTTPException(
+            status_code=429,
+            detail="等待队列已满，请稍后重试",
+            headers={"Retry-After": "30"},
+        )
 
     return CheckSubmitResponse(
         task_id=task_id,

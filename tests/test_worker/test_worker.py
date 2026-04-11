@@ -17,6 +17,17 @@ def task_queue() -> TaskQueue:
     return TaskQueue()
 
 
+class TestTaskQueue:
+    @pytest.mark.asyncio
+    async def test_try_enqueue_rejects_when_queue_is_full(self):
+        queue = TaskQueue(maxsize=1)
+
+        assert queue.try_enqueue("t1") is True
+        assert queue.size() == 1
+        assert queue.try_enqueue("t2") is False
+        assert queue.size() == 1
+
+
 class TestBackgroundWorker:
     @pytest.mark.asyncio
     async def test_process_text_check_task(self, db, task_queue, sample_excel_path):

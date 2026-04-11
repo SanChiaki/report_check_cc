@@ -101,6 +101,11 @@ class Database:
                 task["extra_files"] = json.loads(task.get("extra_files") or "[]")
                 return task
 
+    async def delete_task(self, task_id: str):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
+            await db.commit()
+
     async def update_task_status(self, task_id: str, status: TaskStatus, error: str | None = None):
         async with aiosqlite.connect(self.db_path) as db:
             if status == TaskStatus.PROCESSING:

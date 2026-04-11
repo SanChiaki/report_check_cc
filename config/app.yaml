@@ -6,6 +6,9 @@ storage:
   database_path: "data/reports.db"
   upload_path: "data/uploads"
 
+execution:
+  max_waiting_tasks: 10
+
 limits:
   max_file_size_mb: 20
   max_cells: 50000

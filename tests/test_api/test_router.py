@@ -1,15 +1,21 @@
 import json
 import pytest
+import sqlite3
 from pathlib import Path
 from io import BytesIO
 
 from fastapi.testclient import TestClient
 
 from report_check.main import app
+from report_check.worker.queue import TaskQueue
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_API_BASE_URL", "https://example.com/v1")
+    monkeypatch.setenv("VISION_API_KEY", "test-key")
+    monkeypatch.setenv("VISION_API_BASE_URL", "https://example.com/v1")
     with TestClient(app) as c:
         yield c
 
@@ -59,6 +65,42 @@ class TestSubmitEndpoint:
                 data={"rules": "not json"},
             )
         assert resp.status_code == 400
+
+    def test_submit_returns_429_when_waiting_queue_is_full(self, client, sample_excel_path):
+        client.app.state.task_queue = TaskQueue(maxsize=1)
+        client.app.state.task_queue._queue.put_nowait("queued-task")
+
+        db_path = client.app.state.db.db_path
+        upload_root = client.app.state.file_storage.base_path
+        before_task_count = self._count_tasks(db_path)
+        before_upload_dirs = self._count_upload_dirs(upload_root)
+
+        rules = json.dumps({
+            "rules": [
+                {"id": "r1", "name": "test", "type": "text", "config": {"keywords": ["交付"]}}
+            ]
+        })
+        with open(sample_excel_path, "rb") as f:
+            resp = client.post(
+                "/api/v1/check/submit",
+                files=[("files", ("test.xlsx", f, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))],
+                data={"rules": rules},
+            )
+
+        assert resp.status_code == 429
+        assert resp.headers["Retry-After"] == "30"
+        assert self._count_tasks(db_path) == before_task_count
+        assert self._count_upload_dirs(upload_root) == before_upload_dirs
+
+    def _count_tasks(self, db_path: str) -> int:
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()
+        return int(row[0])
+
+    def _count_upload_dirs(self, upload_root: Path) -> int:
+        if not upload_root.exists():
+            return 0
+        return sum(1 for path in upload_root.iterdir() if path.is_dir())
 
 
 class TestResultEndpoint:
