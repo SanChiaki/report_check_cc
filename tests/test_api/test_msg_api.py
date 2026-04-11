@@ -1,12 +1,8 @@
 """MSG 文件 API 集成测试"""
-import pytest
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
 import json
 
 
-@pytest.mark.asyncio
-async def test_submit_msg_file(test_client):
+def test_submit_msg_file(client):
     """测试提交 MSG 文件"""
     # 创建模拟的 MSG 文件
     msg_content = b"\xD0\xCF\x11\xE0" + b"\x00" * 100  # MSG magic + dummy data
@@ -24,7 +20,7 @@ async def test_submit_msg_file(test_client):
     }
 
     # 提交请求
-    response = await test_client.post(
+    response = client.post(
         "/api/v1/check/submit",
         files={"files": ("test.msg", msg_content, "application/vnd.ms-outlook")},
         data={"rules": json.dumps(rules)}
@@ -36,11 +32,10 @@ async def test_submit_msg_file(test_client):
     assert data["status"] == "pending"
 
 
-@pytest.mark.asyncio
-async def test_msg_file_validation(test_client):
+def test_msg_file_validation(client):
     """测试 MSG 文件格式验证"""
     # 错误的文件扩展名
-    response = await test_client.post(
+    response = client.post(
         "/api/v1/check/submit",
         files={"files": ("test.txt", b"dummy", "text/plain")},
         data={"rules": '{"rules": []}'}
@@ -50,11 +45,10 @@ async def test_msg_file_validation(test_client):
     assert "仅支持" in response.json()["detail"]
 
 
-@pytest.mark.asyncio
-async def test_msg_file_magic_validation(test_client):
+def test_msg_file_magic_validation(client):
     """测试 MSG 文件 magic number 验证"""
     # 正确的扩展名但错误的 magic number
-    response = await test_client.post(
+    response = client.post(
         "/api/v1/check/submit",
         files={"files": ("test.msg", b"invalid", "application/vnd.ms-outlook")},
         data={"rules": '{"rules": []}'}

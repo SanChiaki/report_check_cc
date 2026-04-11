@@ -3,6 +3,15 @@ from pathlib import Path
 import openpyxl
 from PIL import Image
 from io import BytesIO
+from fastapi.testclient import TestClient
+
+from report_check.main import app
+
+
+@pytest.fixture
+def client():
+    with TestClient(app) as c:
+        yield c
 
 
 @pytest.fixture
