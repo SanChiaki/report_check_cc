@@ -6,6 +6,7 @@ from pathlib import Path
 
 from report_check.checkers.base import CheckResult
 from report_check.checkers.factory import CheckerFactory
+from report_check.core.concurrency import TaskExecutionContext
 from report_check.engine.rule_engine import RuleEngine
 from report_check.engine.variable_resolver import VariableResolver
 from report_check.models.manager import ModelManager
@@ -41,6 +42,7 @@ class BackgroundWorker:
         artifacts_manager: ArtifactsManager | None = None,
         worker_concurrency: int = 1,
         per_task_rule_concurrency: int = 1,
+        external_api_limiter=None,
     ):
         self.db = db
         self.model_manager = model_manager
@@ -48,6 +50,7 @@ class BackgroundWorker:
         self.artifacts_manager = artifacts_manager
         self.worker_concurrency = max(worker_concurrency, 1)
         self.per_task_rule_concurrency = max(per_task_rule_concurrency, 1)
+        self.external_api_limiter = external_api_limiter
         self._running = False
         self._workers: list[asyncio.Task] = []
         self._running_tasks = 0
@@ -224,12 +227,14 @@ class BackgroundWorker:
                 artifacts.save_resolved_rules(resolved_rules)
 
             # Step 3: Execute checks
+            execution_context = TaskExecutionContext()
             results = await self._execute_rules(
                 task_id=task_id,
                 resolved_rules=resolved_rules,
                 report_data=report_data,
                 extra_report_data=extra_report_data,
                 artifacts=artifacts,
+                execution_context=execution_context,
             )
 
             # Step 4: Save results
@@ -271,6 +276,7 @@ class BackgroundWorker:
         report_data,
         extra_report_data: list,
         artifacts: TaskArtifacts | None,
+        execution_context: TaskExecutionContext,
     ) -> list[dict]:
         if not resolved_rules:
             return []
@@ -303,6 +309,8 @@ class BackgroundWorker:
                         self.model_manager,
                         artifacts=check_artifact,
                         extra_report_data=extra_report_data,
+                        execution_context=execution_context,
+                        external_api_limiter=self.external_api_limiter,
                     )
 
                     check_result = checker.check(rule["config"])

@@ -130,9 +130,7 @@ class SignatureChecker(BaseChecker):
 
     async def _render_report(self, report_data) -> list[bytes]:
         """渲染报告所有页面为图片列表。"""
-        from report_check.parser.renderer import ReportRenderer
-        renderer = ReportRenderer()
-        return await renderer.render(report_data, self.artifacts)
+        return await self.render_report(report_data)
 
     async def _locate_and_crop_with_grid(
         self,

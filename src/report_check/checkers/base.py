@@ -31,7 +31,9 @@ class BaseChecker(ABC):
     """Abstract base class for all checkers."""
 
     def __init__(self, report_data, model_manager, artifacts: "CheckArtifact | None" = None,
-                 extra_report_data: list | None = None):
+                 extra_report_data: list | None = None,
+                 execution_context=None,
+                 external_api_limiter=None):
         """Initialize checker with report data and model manager.
 
         Args:
@@ -39,11 +41,15 @@ class BaseChecker(ABC):
             model_manager: ModelManager instance
             artifacts: Optional CheckArtifact instance for recording execution details
             extra_report_data: Optional list of additional ReportData instances (for cross-file checks)
+            execution_context: Optional task execution context for per-task caches
+            external_api_limiter: Optional shared limiter for external HTTP APIs
         """
         self.report_data = report_data
         self.model_manager = model_manager
         self.artifacts = artifacts
         self.extra_report_data: list = extra_report_data or []
+        self.execution_context = execution_context
+        self.external_api_limiter = external_api_limiter
 
     @abstractmethod
     def check(self, rule_config) -> CheckResult:
@@ -175,6 +181,39 @@ class BaseChecker(ABC):
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             logger.error(f"Failed to parse location response: {e}")
             return None
+
+    async def render_report(self, report_data=None) -> list[bytes]:
+        """Render report pages with optional task-scoped deduplication."""
+        from report_check.parser.renderer import ReportRenderer
+
+        target_report = report_data or self.report_data
+        renderer = ReportRenderer()
+
+        if self.execution_context is None:
+            return await renderer.render(target_report, self.artifacts)
+
+        pages, _ = await self.execution_context.get_rendered_pages(
+            target_report,
+            lambda: renderer.render(target_report, None),
+        )
+        self._save_rendered_pages_artifacts(target_report, pages)
+        return pages
+
+    async def run_with_external_api_limit(self, api_config: dict, request_func):
+        """Run an external HTTP request under the shared endpoint limiter."""
+        if self.external_api_limiter is None:
+            return await request_func()
+
+        async with self.external_api_limiter.acquire(api_config):
+            return await request_func()
+
+    def _save_rendered_pages_artifacts(self, report_data, pages: list[bytes]) -> None:
+        if not self.artifacts:
+            return
+
+        prefix = "page" if getattr(report_data, "source_type", "") == "pdf" else "sheet"
+        for index, page_data in enumerate(pages, start=1):
+            self.artifacts.add_image_evidence(f"{prefix}_{index}", page_data, "png")
 
     async def call_text_model_with_artifact(self, prompt: str, purpose: str, **kwargs) -> str:
         """调用文本模型并记录到 artifacts

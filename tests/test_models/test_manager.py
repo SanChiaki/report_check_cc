@@ -29,6 +29,25 @@ class TestModelManager:
         with pytest.raises(ValueError, match="Unknown provider"):
             manager.get_adapter("nonexistent")
 
+    def test_register_adapter_builds_concurrency_state_from_adapter_config(self):
+        manager = ModelManager(default_provider="fake")
+        manager.register_adapter(
+            "fake",
+            FakeAdapter({
+                "max_concurrency": 5,
+                "text_max_concurrency": 2,
+                "multimodal_max_concurrency": 1,
+            }),
+        )
+
+        state = manager._provider_states["fake"]
+        assert state.total_semaphore is not None
+        assert state.total_semaphore._value == 5
+        assert state.text_semaphore is not None
+        assert state.text_semaphore._value == 2
+        assert state.multimodal_semaphore is not None
+        assert state.multimodal_semaphore._value == 1
+
     @pytest.mark.asyncio
     async def test_call_text_model(self):
         manager = ModelManager(default_provider="fake")

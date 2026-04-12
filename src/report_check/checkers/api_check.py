@@ -182,16 +182,19 @@ class ApiChecker(BaseChecker):
         body_str = body_str.replace("${extracted_content}", str(content))
         body = json.loads(body_str)
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            if method == "POST":
-                resp = await client.post(endpoint, json=body, headers=headers)
-            elif method == "GET":
-                resp = await client.get(endpoint, params=params, headers=headers)
-            else:
-                resp = await client.request(method, endpoint, json=body, headers=headers)
+        async def make_request():
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                if method == "POST":
+                    resp = await client.post(endpoint, json=body, headers=headers)
+                elif method == "GET":
+                    resp = await client.get(endpoint, params=params, headers=headers)
+                else:
+                    resp = await client.request(method, endpoint, json=body, headers=headers)
 
-            resp.raise_for_status()
-            return resp.json()
+                resp.raise_for_status()
+                return resp.json()
+
+        return await self.run_with_external_api_limit(api_config, make_request)
 
     def _validate_response(self, response: dict, validation: dict) -> bool:
         """Validate API response using operator."""

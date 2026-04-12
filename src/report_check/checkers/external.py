@@ -127,14 +127,17 @@ class ExternalDataChecker(BaseChecker):
         params = api_config.get("params", {})
         response_path = api_config.get("response_path", "")
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            if method == "GET":
-                resp = await client.get(endpoint, params=params, headers=headers)
-            else:
-                resp = await client.request(method, endpoint, headers=headers)
+        async def make_request():
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                if method == "GET":
+                    resp = await client.get(endpoint, params=params, headers=headers)
+                else:
+                    resp = await client.request(method, endpoint, headers=headers)
 
-            resp.raise_for_status()
-            data = resp.json()
+                resp.raise_for_status()
+                return resp.json()
+
+        data = await self.run_with_external_api_limit(api_config, make_request)
 
         # Navigate response path (e.g., "data.devices")
         if response_path:

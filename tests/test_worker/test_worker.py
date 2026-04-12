@@ -1,6 +1,8 @@
 import asyncio
+import json
 import pytest
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 from report_check.checkers.base import CheckResult
 from report_check.checkers.factory import CheckerFactory
@@ -222,6 +224,69 @@ class TestBackgroundWorker:
         await worker._process_task("t-thread")
 
         assert to_thread_calls
+
+    @pytest.mark.asyncio
+    async def test_process_task_reuses_rendered_pages_across_concurrent_render_rules(
+        self,
+        db,
+        task_queue,
+        sample_excel_path,
+        monkeypatch,
+    ):
+        rules = {
+            "rules": [
+                {
+                    "id": "r1",
+                    "name": "multimodal",
+                    "type": "multimodal_check",
+                    "config": {"requirement": "检查报告整体是否完整"},
+                },
+                {
+                    "id": "r2",
+                    "name": "image consistency",
+                    "type": "image_consistency",
+                    "config": {"requirement": "检查项的配图是否符合描述"},
+                },
+            ]
+        }
+        await db.create_task(
+            task_id="t-render-cache",
+            file_name="test.xlsx",
+            file_path=str(sample_excel_path),
+            rules=rules,
+        )
+
+        render_calls = 0
+
+        async def fake_render(self, report_data, artifacts=None):
+            nonlocal render_calls
+            render_calls += 1
+            await asyncio.sleep(0.05)
+            return [b"page-image"]
+
+        async def fake_call_multimodal_model(prompt: str, image: bytes, **kwargs):
+            if "质检报告审核专家" in prompt:
+                return json.dumps({"check_items": []})
+            return json.dumps({"status": "passed", "message": "ok", "confidence": 0.9})
+
+        monkeypatch.setattr("report_check.parser.renderer.ReportRenderer.render", fake_render)
+
+        mm = MagicMock()
+        mm.call_multimodal_model = AsyncMock(side_effect=fake_call_multimodal_model)
+        worker = BackgroundWorker(
+            db=db,
+            model_manager=mm,
+            task_queue=task_queue,
+            per_task_rule_concurrency=2,
+        )
+        await worker._process_task("t-render-cache")
+
+        task = await db.get_task("t-render-cache")
+        results = await db.get_check_results("t-render-cache")
+
+        assert task["status"] == "completed"
+        assert len(results) == 2
+        assert render_calls == 1
 
     @pytest.mark.asyncio
     async def test_process_text_check_task(self, db, task_queue, sample_excel_path):

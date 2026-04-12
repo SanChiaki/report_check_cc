@@ -41,6 +41,8 @@ class CheckerFactory:
         model_manager,
         artifacts: "CheckArtifact | None" = None,
         extra_report_data: list | None = None,
+        execution_context=None,
+        external_api_limiter=None,
     ) -> BaseChecker:
         """Create a checker instance.
 
@@ -65,7 +67,9 @@ class CheckerFactory:
 
         checker_class = cls.CHECKER_MAP[checker_type]
         return checker_class(report_data, model_manager, artifacts=artifacts,
-                             extra_report_data=extra_report_data or [])
+                             extra_report_data=extra_report_data or [],
+                             execution_context=execution_context,
+                             external_api_limiter=external_api_limiter)
 
     @classmethod
     def register(cls, checker_type: str, checker_class: Type[BaseChecker]) -> None:

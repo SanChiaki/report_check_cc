@@ -12,6 +12,7 @@ from slowapi.util import get_remote_address
 
 from report_check.api.router import router
 from report_check.core.config import load_config
+from report_check.core.concurrency import ExternalApiLimiter
 from report_check.core.exceptions import CheckError
 from report_check.models.manager import ModelManager
 from report_check.models.openai_adapter import OpenAIAdapter
@@ -45,6 +46,7 @@ async def lifespan(app: FastAPI):
 
     storage_config = app_config.get("storage", {})
     execution_config = app_config.get("execution", {})
+    external_api_config = app_config.get("external_api_limits", {})
 
     # Ensure data directories exist
     Path(storage_config.get("database_path", "data/reports.db")).parent.mkdir(parents=True, exist_ok=True)
@@ -71,6 +73,10 @@ async def lifespan(app: FastAPI):
         model_manager.register_adapter(name, OpenAIAdapter(cfg))
 
     app.state.model_manager = model_manager
+    app.state.external_api_limiter = ExternalApiLimiter(
+        default_max_concurrency=external_api_config.get("default_max_concurrency"),
+        by_endpoint=external_api_config.get("by_endpoint", {}),
+    )
 
     # Start worker
     app.state.worker = BackgroundWorker(
@@ -80,6 +86,7 @@ async def lifespan(app: FastAPI):
         artifacts_manager=app.state.artifacts_manager,
         worker_concurrency=execution_config.get("worker_concurrency", 1),
         per_task_rule_concurrency=execution_config.get("per_task_rule_concurrency", 1),
+        external_api_limiter=app.state.external_api_limiter,
     )
     await app.state.worker.start()
 

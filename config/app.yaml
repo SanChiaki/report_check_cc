@@ -11,6 +11,10 @@ execution:
   worker_concurrency: 2
   per_task_rule_concurrency: 5
 
+external_api_limits:
+  default_max_concurrency: 2
+  by_endpoint: {}
+
 limits:
   max_file_size_mb: 20
   max_cells: 50000

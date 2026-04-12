@@ -129,10 +129,7 @@ class ImageConsistencyChecker(BaseChecker):
 
     async def _render_report(self) -> list:
         """Render report pages as images."""
-        from report_check.parser.renderer import ReportRenderer
-
-        renderer = ReportRenderer()
-        return await renderer.render(self.report_data, self.artifacts)
+        return await self.render_report(self.report_data)
 
     async def _analyze_page(
         self, img_data: bytes, page_num: int, requirement: str

@@ -1,5 +1,6 @@
 import pytest
 import json
+import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 
 from report_check.checkers.api_check import ApiChecker
@@ -111,3 +112,77 @@ class TestApiChecker:
         assert checker._validate_response({"score": 90}, {"success_field": "score", "success_value": "80", "operator": "gt"})
         # gte
         assert checker._validate_response({"score": 80}, {"success_field": "score", "success_value": "80", "operator": "gte"})
+
+    @pytest.mark.asyncio
+    async def test_api_checker_respects_shared_external_api_limiter(self, sample_excel_path):
+        from report_check.core.concurrency import ExternalApiLimiter
+
+        parser = ExcelParser()
+        report = parser.parse(str(sample_excel_path))
+
+        locate_resp = json.dumps({
+            "found": True,
+            "locations": [{"cell_range": "A15", "context": "签名区域", "confidence": 0.9}],
+            "reason": "found",
+        })
+        mm = AsyncMock()
+        mm.call_text_model = AsyncMock(return_value=locate_resp)
+
+        limiter = ExternalApiLimiter(
+            default_max_concurrency=2,
+            by_endpoint={"sig_check": 1},
+        )
+        checker_one = ApiChecker(report, mm, external_api_limiter=limiter)
+        checker_two = ApiChecker(report, mm, external_api_limiter=limiter)
+
+        inflight = 0
+        max_inflight = 0
+        inflight_lock = asyncio.Lock()
+
+        async def controlled_post(*args, **kwargs):
+            nonlocal inflight, max_inflight
+            async with inflight_lock:
+                inflight += 1
+                max_inflight = max(max_inflight, inflight)
+            await asyncio.sleep(0.05)
+            async with inflight_lock:
+                inflight -= 1
+
+            mock_resp = Mock()
+            mock_resp.json.return_value = {"status": "valid"}
+            mock_resp.raise_for_status = Mock()
+            return mock_resp
+
+        with patch("report_check.checkers.api_check.httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_client.return_value)
+            mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_client.return_value.post = AsyncMock(side_effect=controlled_post)
+
+            rule_config = {
+                "extract": {
+                    "type": "image",
+                    "description": "签名图片",
+                    "fallback": "last_image",
+                },
+                "api": {
+                    "name": "sig_check",
+                    "endpoint": "https://api.example.com/check",
+                    "method": "POST",
+                    "body": {"image": "${extracted_content}"},
+                    "timeout": 10,
+                },
+                "validation": {
+                    "success_field": "status",
+                    "success_value": "valid",
+                    "operator": "eq",
+                },
+            }
+
+            first, second = await asyncio.gather(
+                checker_one.check(rule_config),
+                checker_two.check(rule_config),
+            )
+
+        assert first.status == "passed"
+        assert second.status == "passed"
+        assert max_inflight == 1
