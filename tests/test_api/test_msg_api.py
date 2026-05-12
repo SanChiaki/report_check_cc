@@ -1,29 +1,24 @@
-"""MSG 文件 API 集成测试"""
 import json
 
 
 def test_submit_msg_file(client):
-    """测试提交 MSG 文件"""
-    # 创建模拟的 MSG 文件
-    msg_content = b"\xD0\xCF\x11\xE0" + b"\x00" * 100  # MSG magic + dummy data
+    msg_content = b"\xD0\xCF\x11\xE0" + b"\x00" * 100
 
-    # 模拟规则
     rules = {
         "rules": [
             {
                 "id": "r1",
                 "name": "检查邮件正文",
                 "type": "text",
-                "config": {"field": "email_body", "keywords": ["测试"]}
+                "config": {"field": "email_body", "keywords": ["测试"]},
             }
         ]
     }
 
-    # 提交请求
     response = client.post(
         "/api/v1/check/submit",
         files={"files": ("test.msg", msg_content, "application/vnd.ms-outlook")},
-        data={"rules": json.dumps(rules)}
+        data={"rules": json.dumps(rules)},
     )
 
     assert response.status_code == 200
@@ -33,25 +28,21 @@ def test_submit_msg_file(client):
 
 
 def test_msg_file_validation(client):
-    """测试 MSG 文件格式验证"""
-    # 错误的文件扩展名
     response = client.post(
         "/api/v1/check/submit",
         files={"files": ("test.txt", b"dummy", "text/plain")},
-        data={"rules": '{"rules": []}'}
+        data={"rules": '{"rules": []}'},
     )
 
     assert response.status_code == 400
-    assert "仅支持" in response.json()["detail"]
+    assert ".msg" in response.json()["detail"]
 
 
 def test_msg_file_magic_validation(client):
-    """测试 MSG 文件 magic number 验证"""
-    # 正确的扩展名但错误的 magic number
     response = client.post(
         "/api/v1/check/submit",
         files={"files": ("test.msg", b"invalid", "application/vnd.ms-outlook")},
-        data={"rules": '{"rules": []}'}
+        data={"rules": '{"rules": []}'},
     )
 
     assert response.status_code == 400

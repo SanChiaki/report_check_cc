@@ -1,21 +1,21 @@
 import json
-import uuid
 import logging
-import tempfile
-import shutil
 import os
+import shutil
+import tempfile
+import uuid
 from pathlib import Path
-
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, BackgroundTasks
-from fastapi.responses import FileResponse
 from typing import Optional
-import zipfile
-import io
+
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from report_check.api.schemas import (
+    CheckResultData,
     CheckResultItem,
     CheckResultResponse,
-    CheckResultData,
     CheckSubmitResponse,
     CheckSummary,
     HealthResponse,
@@ -23,10 +23,6 @@ from report_check.api.schemas import (
     RuleValidateResponse,
     ValidationError,
 )
-from report_check.core.exceptions import CheckError
-from report_check.engine.validator import RuleValidator
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +61,13 @@ async def submit_check(
     if not files:
         raise HTTPException(status_code=400, detail="至少需要上传一个文件")
 
-    # Validate all files
     file_data_list = []
     for f in files:
         if not f.filename or not f.filename.endswith((".xlsx", ".xls", ".pdf", ".msg")):
-            raise HTTPException(status_code=400, detail=f"仅支持 .xlsx、.xls、.pdf 或 .msg 文件：{f.filename}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"仅支持 .xlsx、.xls、.pdf 或 .msg 文件：{f.filename}",
+            )
         data = await f.read()
         if len(data) > MAX_FILE_SIZE:
             raise HTTPException(status_code=400, detail=f"文件 {f.filename} 大小超过 20MB 限制")
@@ -80,32 +78,27 @@ async def submit_check(
             raise HTTPException(status_code=400, detail=f"文件格式不合法：{f.filename}")
         file_data_list.append((f.filename, data))
 
-    # Parse rules
     try:
         rules_dict = json.loads(rules)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="规则 DSL 必须是有效的 JSON")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="规则 DSL 必须是有效的 JSON") from exc
 
-    # Validate rules DSL structure
     if not isinstance(rules_dict, dict):
         raise HTTPException(status_code=400, detail="规则 DSL 必须是 JSON 对象")
 
-    # Parse context_vars
     ctx_vars = None
     if context_vars:
         try:
             ctx_vars = json.loads(context_vars)
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="context_vars 必须是有效的 JSON")
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail="context_vars 必须是有效的 JSON") from exc
 
-    # Save files
     task_id = str(uuid.uuid4())
     primary_filename, primary_data = file_data_list[0]
     file_path = await request.app.state.file_storage.save_uploaded_file(
         primary_data, primary_filename, task_id
     )
 
-    # Save extra files (if any)
     extra_file_paths = []
     for i, (fname, fdata) in enumerate(file_data_list[1:], start=1):
         extra_path = await request.app.state.file_storage.save_uploaded_file(
@@ -113,8 +106,7 @@ async def submit_check(
         )
         extra_file_paths.append(extra_path)
 
-    # Create task
-    await request.app.state.db.create_task(
+    await request.app.state.task_store.create_task(
         task_id=task_id,
         file_name=primary_filename,
         file_path=file_path,
@@ -124,10 +116,9 @@ async def submit_check(
         extra_file_paths=extra_file_paths,
     )
 
-    # Enqueue
     if not request.app.state.task_queue.try_enqueue(task_id):
         try:
-            await request.app.state.db.delete_task(task_id)
+            await request.app.state.task_store.delete_task(task_id)
         finally:
             await request.app.state.file_storage.cleanup_task_files(task_id)
         raise HTTPException(
@@ -145,7 +136,7 @@ async def submit_check(
 
 @router.get("/check/result/{task_id}", response_model=CheckResultResponse)
 async def get_check_result(request: Request, task_id: str):
-    task = await request.app.state.db.get_task(task_id)
+    task = await request.app.state.task_store.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
@@ -156,7 +147,7 @@ async def get_check_result(request: Request, task_id: str):
     )
 
     if task["status"] == "completed":
-        results = await request.app.state.db.get_check_results(task_id)
+        results = await request.app.state.task_store.get_check_results(task_id)
         items = [
             CheckResultItem(
                 rule_id=r["rule_id"],
@@ -203,18 +194,41 @@ async def validate_rules(rules: dict):
 
     structured_errors: list[ValidationError] = []
     required_fields = {"id", "name", "type"}
-    valid_types = {"text", "semantic", "image", "api", "external_data", "multimodal_check", "signature_compare", "image_consistency"}
+    valid_types = {
+        "text",
+        "semantic",
+        "image",
+        "api",
+        "external_data",
+        "multimodal_check",
+        "signature_compare",
+        "image_consistency",
+    }
 
     for i, rule in enumerate(rule_list):
         rule_id = rule.get("id", f"r{i}")
         if not isinstance(rule, dict):
-            structured_errors.append(ValidationError(rule_id=rule_id, field="", message="must be a dict"))
+            structured_errors.append(
+                ValidationError(rule_id=rule_id, field="", message="must be a dict")
+            )
             continue
         for field in required_fields:
             if field not in rule:
-                structured_errors.append(ValidationError(rule_id=rule_id, field=field, message=f"missing required field '{field}'"))
+                structured_errors.append(
+                    ValidationError(
+                        rule_id=rule_id,
+                        field=field,
+                        message=f"missing required field '{field}'",
+                    )
+                )
         if "type" in rule and rule["type"] not in valid_types:
-            structured_errors.append(ValidationError(rule_id=rule_id, field="type", message=f"unknown type '{rule['type']}'"))
+            structured_errors.append(
+                ValidationError(
+                    rule_id=rule_id,
+                    field="type",
+                    message=f"unknown type '{rule['type']}'",
+                )
+            )
 
     return RuleValidateResponse(
         valid=len(structured_errors) == 0,
@@ -222,29 +236,12 @@ async def validate_rules(rules: dict):
     )
 
 
-@router.get("/templates")
-async def list_templates(request: Request, report_type: Optional[str] = None):
-    templates = await request.app.state.db.get_rule_templates(report_type)
-    return {"templates": templates}
-
-
-@router.get("/templates/{template_id}")
-async def get_template(request: Request, template_id: int):
-    template = await request.app.state.db.get_rule_template(template_id)
-    if not template:
-        raise HTTPException(status_code=404, detail="模板不存在")
-    return template
-
-
 @router.get("/tasks/{task_id}/artifacts")
 async def list_task_artifacts(request: Request, task_id: str):
-    """List all artifacts for a task."""
-    # Check if task exists
-    task = await request.app.state.db.get_task(task_id)
+    task = await request.app.state.task_store.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
-    # Check if artifacts manager is available
     if not hasattr(request.app.state, "artifacts_manager") or not request.app.state.artifacts_manager:
         raise HTTPException(status_code=404, detail="Artifacts 未启用")
 
@@ -253,44 +250,44 @@ async def list_task_artifacts(request: Request, task_id: str):
         return {"task_id": task_id, "artifacts": []}
 
     def scan_directory(path: Path, rel_path: str = "") -> list:
-        """Recursively scan directory and return file list."""
         items = []
         try:
             for item in sorted(path.iterdir()):
                 item_rel = f"{rel_path}/{item.name}" if rel_path else item.name
                 if item.is_dir():
-                    items.append({
-                        "name": item.name,
-                        "type": "directory",
-                        "path": item_rel,
-                        "children": scan_directory(item, item_rel)
-                    })
+                    items.append(
+                        {
+                            "name": item.name,
+                            "type": "directory",
+                            "path": item_rel,
+                            "children": scan_directory(item, item_rel),
+                        }
+                    )
                 else:
-                    items.append({
-                        "name": item.name,
-                        "type": "file",
-                        "path": item_rel,
-                        "size": item.stat().st_size,
-                    })
-        except Exception as e:
-            logger.warning(f"Failed to scan directory {path}: {e}")
+                    items.append(
+                        {
+                            "name": item.name,
+                            "type": "file",
+                            "path": item_rel,
+                            "size": item.stat().st_size,
+                        }
+                    )
+        except Exception as exc:
+            logger.warning("Failed to scan directory %s: %s", path, exc)
         return items
 
     return {
         "task_id": task_id,
-        "artifacts": scan_directory(artifacts_path)
+        "artifacts": scan_directory(artifacts_path),
     }
 
 
 @router.get("/tasks/{task_id}/artifacts/download")
 async def download_task_artifacts(request: Request, task_id: str, background_tasks: BackgroundTasks):
-    """Download all artifacts for a task as a zip file."""
-    # Check if task exists
-    task = await request.app.state.db.get_task(task_id)
+    task = await request.app.state.task_store.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
-    # Check if artifacts manager is available
     if not hasattr(request.app.state, "artifacts_manager") or not request.app.state.artifacts_manager:
         raise HTTPException(status_code=404, detail="Artifacts 未启用")
 
@@ -298,14 +295,11 @@ async def download_task_artifacts(request: Request, task_id: str, background_tas
     if not artifacts_path.exists():
         raise HTTPException(status_code=404, detail="该任务没有 artifacts")
 
-    # Create temp file for the zip
     with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
         tmp_path = tmp.name
 
-    # Create zip archive
     zip_path = shutil.make_archive(tmp_path[:-4], "zip", artifacts_path)
 
-    # Clean up temp file after streaming
     def cleanup():
         try:
             os.unlink(zip_path)
@@ -323,24 +317,20 @@ async def download_task_artifacts(request: Request, task_id: str, background_tas
 
 @router.get("/tasks/{task_id}/artifacts/{file_path:path}")
 async def get_task_artifact(request: Request, task_id: str, file_path: str):
-    """Get a specific artifact file."""
-    # Check if task exists
-    task = await request.app.state.db.get_task(task_id)
+    task = await request.app.state.task_store.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
-    # Check if artifacts manager is available
     if not hasattr(request.app.state, "artifacts_manager") or not request.app.state.artifacts_manager:
         raise HTTPException(status_code=404, detail="Artifacts 未启用")
 
     artifacts_path = request.app.state.artifacts_manager.base_path / task_id
     file_full_path = artifacts_path / file_path
 
-    # Security check: ensure the file is within the task's artifacts directory
     try:
         file_full_path.resolve().relative_to(artifacts_path.resolve())
-    except ValueError:
-        raise HTTPException(status_code=403, detail="访问被拒绝")
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="访问被拒绝") from exc
 
     if not file_full_path.exists():
         raise HTTPException(status_code=404, detail="文件不存在")
@@ -348,7 +338,6 @@ async def get_task_artifact(request: Request, task_id: str, file_path: str):
     if file_full_path.is_dir():
         raise HTTPException(status_code=400, detail="路径是目录，请使用 list 接口")
 
-    # Determine content type
     content_type = "application/octet-stream"
     if file_path.endswith(".json"):
         content_type = "application/json"

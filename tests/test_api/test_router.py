@@ -1,9 +1,8 @@
 import json
-import pytest
-import sqlite3
-from pathlib import Path
 from io import BytesIO
+from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from report_check.main import app
@@ -69,7 +68,6 @@ class TestHealthEndpoint:
             if path.endswith("app.yaml"):
                 return {
                     "storage": {
-                        "database_path": str(tmp_path / "test.db"),
                         "upload_path": str(tmp_path / "uploads"),
                         "artifacts_path": str(tmp_path / "tasks"),
                     },
@@ -125,11 +123,13 @@ class TestHealthEndpoint:
 
 class TestSubmitEndpoint:
     def test_submit_valid(self, client, sample_excel_path):
-        rules = json.dumps({
-            "rules": [
-                {"id": "r1", "name": "test", "type": "text", "config": {"keywords": ["交付"]}}
-            ]
-        })
+        rules = json.dumps(
+            {
+                "rules": [
+                    {"id": "r1", "name": "test", "type": "text", "config": {"keywords": ["交付"]}}
+                ]
+            }
+        )
         with open(sample_excel_path, "rb") as f:
             resp = client.post(
                 "/api/v1/check/submit",
@@ -163,16 +163,17 @@ class TestSubmitEndpoint:
         client.app.state.task_queue = TaskQueue(maxsize=1)
         client.app.state.task_queue._queue.put_nowait("queued-task")
 
-        db_path = client.app.state.db.db_path
         upload_root = client.app.state.file_storage.base_path
-        before_task_count = self._count_tasks(db_path)
+        before_task_count = self._count_tasks(client.app.state.task_store)
         before_upload_dirs = self._count_upload_dirs(upload_root)
 
-        rules = json.dumps({
-            "rules": [
-                {"id": "r1", "name": "test", "type": "text", "config": {"keywords": ["交付"]}}
-            ]
-        })
+        rules = json.dumps(
+            {
+                "rules": [
+                    {"id": "r1", "name": "test", "type": "text", "config": {"keywords": ["交付"]}}
+                ]
+            }
+        )
         with open(sample_excel_path, "rb") as f:
             resp = client.post(
                 "/api/v1/check/submit",
@@ -182,13 +183,11 @@ class TestSubmitEndpoint:
 
         assert resp.status_code == 429
         assert resp.headers["Retry-After"] == "30"
-        assert self._count_tasks(db_path) == before_task_count
+        assert self._count_tasks(client.app.state.task_store) == before_task_count
         assert self._count_upload_dirs(upload_root) == before_upload_dirs
 
-    def _count_tasks(self, db_path: str) -> int:
-        with sqlite3.connect(db_path) as conn:
-            row = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()
-        return int(row[0])
+    def _count_tasks(self, task_store) -> int:
+        return len(task_store._tasks)
 
     def _count_upload_dirs(self, upload_root: Path) -> int:
         if not upload_root.exists():

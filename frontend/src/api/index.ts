@@ -56,13 +56,6 @@ export interface ValidateResponse {
   errors: ValidationError[]
 }
 
-export interface Template {
-  id: number
-  name: string
-  report_type: string
-  rules: object
-}
-
 export async function submitCheck(
   file: File,
   rules: object,
@@ -99,14 +92,4 @@ export async function validateRules(rules: object): Promise<ValidateResponse> {
     throw new Error(err.detail || '验证失败')
   }
   return res.json()
-}
-
-export async function listTemplates(reportType?: string): Promise<Template[]> {
-  const url = reportType
-    ? `${BASE}/templates?report_type=${encodeURIComponent(reportType)}`
-    : `${BASE}/templates`
-  const res = await fetch(url)
-  if (!res.ok) throw new Error('获取模板失败')
-  const data = await res.json()
-  return data.templates
 }

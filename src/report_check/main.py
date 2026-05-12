@@ -17,8 +17,8 @@ from report_check.core.exceptions import CheckError
 from report_check.models.manager import ModelManager
 from report_check.models.openai_adapter import OpenAIAdapter
 from report_check.storage.artifacts import ArtifactsManager
-from report_check.storage.database import Database
 from report_check.storage.file import FileStorage
+from report_check.storage.task_store import TaskStore
 from report_check.worker.queue import TaskQueue
 from report_check.worker.worker import BackgroundWorker
 
@@ -42,17 +42,14 @@ async def lifespan(app: FastAPI):
     if app_config_path.exists():
         app_config = load_config(str(app_config_path))
     else:
-        app_config = {"storage": {"database_path": "data/reports.db", "upload_path": "data/uploads"}}
+        app_config = {"storage": {"upload_path": "data/uploads"}}
 
     storage_config = app_config.get("storage", {})
     execution_config = app_config.get("execution", {})
     external_api_config = app_config.get("external_api_limits", {})
 
-    # Ensure data directories exist
-    Path(storage_config.get("database_path", "data/reports.db")).parent.mkdir(parents=True, exist_ok=True)
-
     # Init components
-    app.state.db = Database(storage_config.get("database_path", "data/reports.db"))
+    app.state.task_store = TaskStore()
     app.state.file_storage = FileStorage(storage_config.get("upload_path", "data/uploads"))
     app.state.task_queue = TaskQueue(maxsize=execution_config.get("max_waiting_tasks", 10))
 
@@ -80,7 +77,7 @@ async def lifespan(app: FastAPI):
 
     # Start worker
     app.state.worker = BackgroundWorker(
-        db=app.state.db,
+        task_store=app.state.task_store,
         model_manager=model_manager,
         task_queue=app.state.task_queue,
         artifacts_manager=app.state.artifacts_manager,

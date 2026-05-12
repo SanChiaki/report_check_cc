@@ -3,7 +3,6 @@ server:
   port: 8000
 
 storage:
-  database_path: "data/reports.db"
   upload_path: "data/uploads"
 
 execution:
