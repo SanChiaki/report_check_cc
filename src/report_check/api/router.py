@@ -23,10 +23,11 @@ from report_check.api.schemas import (
     RuleValidateResponse,
     ValidationError,
 )
+from report_check.runtime import get_runtime
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1")
+router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
 
 EXCEL_MAGIC = b"PK"
@@ -36,12 +37,13 @@ MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
 
 
 @router.get("/health", response_model=HealthResponse)
-async def health_check(request: Request):
-    model_stats = request.app.state.model_manager.get_inflight_stats()
+async def health_check():
+    runtime = get_runtime()
+    model_stats = runtime.model_manager.get_inflight_stats()
     return HealthResponse(
         status="ok",
-        queue_size=request.app.state.task_queue.size(),
-        running_tasks=request.app.state.worker.running_tasks,
+        queue_size=runtime.task_queue.size(),
+        running_tasks=runtime.worker.running_tasks,
         model_inflight=model_stats["model_inflight"],
         model_text_inflight=model_stats["model_text_inflight"],
         model_multimodal_inflight=model_stats["model_multimodal_inflight"],
@@ -58,6 +60,8 @@ async def submit_check(
     report_type: Optional[str] = Form(None),
     context_vars: Optional[str] = Form(None),
 ):
+    runtime = get_runtime()
+
     if not files:
         raise HTTPException(status_code=400, detail="至少需要上传一个文件")
 
@@ -95,18 +99,18 @@ async def submit_check(
 
     task_id = str(uuid.uuid4())
     primary_filename, primary_data = file_data_list[0]
-    file_path = await request.app.state.file_storage.save_uploaded_file(
+    file_path = await runtime.file_storage.save_uploaded_file(
         primary_data, primary_filename, task_id
     )
 
     extra_file_paths = []
     for i, (fname, fdata) in enumerate(file_data_list[1:], start=1):
-        extra_path = await request.app.state.file_storage.save_uploaded_file(
+        extra_path = await runtime.file_storage.save_uploaded_file(
             fdata, f"extra_{i}_{fname}", task_id
         )
         extra_file_paths.append(extra_path)
 
-    await request.app.state.task_store.create_task(
+    await runtime.task_store.create_task(
         task_id=task_id,
         file_name=primary_filename,
         file_path=file_path,
@@ -116,11 +120,11 @@ async def submit_check(
         extra_file_paths=extra_file_paths,
     )
 
-    if not request.app.state.task_queue.try_enqueue(task_id):
+    if not runtime.task_queue.try_enqueue(task_id):
         try:
-            await request.app.state.task_store.delete_task(task_id)
+            await runtime.task_store.delete_task(task_id)
         finally:
-            await request.app.state.file_storage.cleanup_task_files(task_id)
+            await runtime.file_storage.cleanup_task_files(task_id)
         raise HTTPException(
             status_code=429,
             detail="等待队列已满，请稍后重试",
@@ -135,8 +139,9 @@ async def submit_check(
 
 
 @router.get("/check/result/{task_id}", response_model=CheckResultResponse)
-async def get_check_result(request: Request, task_id: str):
-    task = await request.app.state.task_store.get_task(task_id)
+async def get_check_result(task_id: str):
+    runtime = get_runtime()
+    task = await runtime.task_store.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
@@ -147,7 +152,7 @@ async def get_check_result(request: Request, task_id: str):
     )
 
     if task["status"] == "completed":
-        results = await request.app.state.task_store.get_check_results(task_id)
+        results = await runtime.task_store.get_check_results(task_id)
         items = [
             CheckResultItem(
                 rule_id=r["rule_id"],
@@ -237,15 +242,13 @@ async def validate_rules(rules: dict):
 
 
 @router.get("/tasks/{task_id}/artifacts")
-async def list_task_artifacts(request: Request, task_id: str):
-    task = await request.app.state.task_store.get_task(task_id)
+async def list_task_artifacts(task_id: str):
+    runtime = get_runtime()
+    task = await runtime.task_store.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
-    if not hasattr(request.app.state, "artifacts_manager") or not request.app.state.artifacts_manager:
-        raise HTTPException(status_code=404, detail="Artifacts 未启用")
-
-    artifacts_path = request.app.state.artifacts_manager.base_path / task_id
+    artifacts_path = runtime.artifacts_manager.base_path / task_id
     if not artifacts_path.exists():
         return {"task_id": task_id, "artifacts": []}
 
@@ -283,15 +286,13 @@ async def list_task_artifacts(request: Request, task_id: str):
 
 
 @router.get("/tasks/{task_id}/artifacts/download")
-async def download_task_artifacts(request: Request, task_id: str, background_tasks: BackgroundTasks):
-    task = await request.app.state.task_store.get_task(task_id)
+async def download_task_artifacts(task_id: str, background_tasks: BackgroundTasks):
+    runtime = get_runtime()
+    task = await runtime.task_store.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
-    if not hasattr(request.app.state, "artifacts_manager") or not request.app.state.artifacts_manager:
-        raise HTTPException(status_code=404, detail="Artifacts 未启用")
-
-    artifacts_path = request.app.state.artifacts_manager.base_path / task_id
+    artifacts_path = runtime.artifacts_manager.base_path / task_id
     if not artifacts_path.exists():
         raise HTTPException(status_code=404, detail="该任务没有 artifacts")
 
@@ -316,15 +317,13 @@ async def download_task_artifacts(request: Request, task_id: str, background_tas
 
 
 @router.get("/tasks/{task_id}/artifacts/{file_path:path}")
-async def get_task_artifact(request: Request, task_id: str, file_path: str):
-    task = await request.app.state.task_store.get_task(task_id)
+async def get_task_artifact(task_id: str, file_path: str):
+    runtime = get_runtime()
+    task = await runtime.task_store.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
-    if not hasattr(request.app.state, "artifacts_manager") or not request.app.state.artifacts_manager:
-        raise HTTPException(status_code=404, detail="Artifacts 未启用")
-
-    artifacts_path = request.app.state.artifacts_manager.base_path / task_id
+    artifacts_path = runtime.artifacts_manager.base_path / task_id
     file_full_path = artifacts_path / file_path
 
     try:
