@@ -7,10 +7,8 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from report_check.api.schemas import (
     CheckResultData,
@@ -28,7 +26,6 @@ from report_check.runtime import get_runtime
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-limiter = Limiter(key_func=get_remote_address)
 
 EXCEL_MAGIC = b"PK"
 PDF_MAGIC = b"%PDF"
@@ -52,9 +49,7 @@ async def health_check():
 
 
 @router.post("/check/submit", response_model=CheckSubmitResponse)
-@limiter.limit("10/minute")
 async def submit_check(
-    request: Request,
     files: list[UploadFile] = File(...),
     rules: str = Form(...),
     report_type: Optional[str] = Form(None),
