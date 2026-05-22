@@ -35,6 +35,12 @@ class ArtifactsManager:
             shutil.rmtree(task_path)
         return TaskArtifacts(task_path, task_id)
 
+    def cleanup_task_artifacts(self, task_id: str) -> None:
+        task_path = self.base_path / task_id
+        if task_path.exists():
+            import shutil
+            shutil.rmtree(task_path)
+
     def get_task(self, task_id: str) -> "TaskArtifacts | None":
         """获取已有任务的过程文件管理器"""
         task_path = self.base_path / task_id

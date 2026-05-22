@@ -14,7 +14,7 @@ from report_check.parser.excel import ExcelParser
 from report_check.parser.pdf import PDFParser
 from report_check.parser.msg import MSGParser
 from report_check.storage.artifacts import ArtifactsManager, TaskArtifacts
-from report_check.storage.database import Database, TaskStatus
+from report_check.storage.task_store import TaskStatus, TaskStore
 from report_check.worker.queue import TaskQueue
 
 logger = logging.getLogger(__name__)
@@ -36,21 +36,23 @@ class BackgroundWorker:
 
     def __init__(
         self,
-        db: Database,
+        task_store: TaskStore,
         model_manager: ModelManager,
         task_queue: TaskQueue,
         artifacts_manager: ArtifactsManager | None = None,
         worker_concurrency: int = 1,
         per_task_rule_concurrency: int = 1,
         external_api_limiter=None,
+        cleanup_manager=None,
     ):
-        self.db = db
+        self.task_store = task_store
         self.model_manager = model_manager
         self.task_queue = task_queue
         self.artifacts_manager = artifacts_manager
         self.worker_concurrency = max(worker_concurrency, 1)
         self.per_task_rule_concurrency = max(per_task_rule_concurrency, 1)
         self.external_api_limiter = external_api_limiter
+        self.cleanup_manager = cleanup_manager
         self._running = False
         self._workers: list[asyncio.Task] = []
         self._running_tasks = 0
@@ -58,12 +60,6 @@ class BackgroundWorker:
 
     async def start(self):
         self._running = True
-
-        # Recover orphaned tasks
-        recovered = await self.db.recover_orphaned_tasks()
-        for tid in recovered:
-            await self.task_queue.enqueue(tid)
-            logger.info(f"Re-enqueued recovered task: {tid}")
 
         self._workers = [
             asyncio.create_task(self._run_loop(index))
@@ -102,7 +98,7 @@ class BackgroundWorker:
         return self._running_tasks
 
     async def _process_task(self, task_id: str):
-        task = await self.db.get_task(task_id)
+        task = await self.task_store.get_task(task_id)
         if not task:
             logger.warning(f"Task not found: {task_id}")
             return
@@ -114,10 +110,10 @@ class BackgroundWorker:
             logger.info(f"Initialized artifacts for task {task_id}")
 
         try:
-            await self.db.update_task_status(task_id, TaskStatus.PROCESSING)
+            await self.task_store.update_task_status(task_id, TaskStatus.PROCESSING)
 
             # Step 1: Parse file (Excel or PDF)
-            await self.db.update_task_progress(task_id, 10)
+            await self.task_store.update_task_progress(task_id, 10)
             file_path = task["file_path"]
             file_name = task["file_name"]
 
@@ -156,7 +152,7 @@ class BackgroundWorker:
                     logger.warning(f"Failed to parse extra file {extra_path}: {e}")
 
             # Step 2: Load rules and resolve variables
-            await self.db.update_task_progress(task_id, 20)
+            await self.task_store.update_task_progress(task_id, 20)
             engine = RuleEngine()
             user_rules = task["rules"].get("rules", [])
 
@@ -238,8 +234,8 @@ class BackgroundWorker:
             )
 
             # Step 4: Save results
-            await self.db.update_task_progress(task_id, 95)
-            await self.db.save_check_results(task_id, results)
+            await self.task_store.update_task_progress(task_id, 95)
+            await self.task_store.save_check_results(task_id, results)
 
             # Save final artifacts
             if artifacts:
@@ -254,11 +250,12 @@ class BackgroundWorker:
                     "error": sum(1 for r in results if r["status"] == "error"),
                 })
 
-            await self.db.update_task_status(task_id, TaskStatus.COMPLETED)
+            await self.task_store.update_task_status(task_id, TaskStatus.COMPLETED)
+            self._schedule_cleanup(task_id)
 
         except Exception as e:
             logger.error(f"Task {task_id} failed: {e}", exc_info=True)
-            await self.db.update_task_status(task_id, TaskStatus.FAILED, error=str(e))
+            await self.task_store.update_task_status(task_id, TaskStatus.FAILED, error=str(e))
 
             # Save error to artifacts
             if artifacts:
@@ -268,6 +265,11 @@ class BackgroundWorker:
                     "status": "failed",
                     "error": str(e),
                 })
+            self._schedule_cleanup(task_id)
+
+    def _schedule_cleanup(self, task_id: str) -> None:
+        if self.cleanup_manager is not None:
+            self.cleanup_manager.schedule_cleanup(task_id)
 
     async def _execute_rules(
         self,
@@ -358,7 +360,7 @@ class BackgroundWorker:
                     completed_count += 1
                     progress = 20 + int((completed_count / len(resolved_rules)) * 70)
 
-                await self.db.update_task_progress(task_id, progress)
+                await self.task_store.update_task_progress(task_id, progress)
 
         await asyncio.gather(
             *(run_rule(index, rule) for index, rule in enumerate(resolved_rules))

@@ -1,33 +1,46 @@
 import json
-import pytest
-import sqlite3
-from pathlib import Path
 from io import BytesIO
+from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
-from report_check.main import app
-from report_check.models.base import BaseModelAdapter, ModelType
+from report_check.main import app, set_standalone_settings_loader
+from report_check.settings import ReportCheckSettings
 from report_check.worker.queue import TaskQueue
 
 
-class FakeConfiguredAdapter(BaseModelAdapter):
-    async def call_text_model(self, prompt: str, **kwargs) -> str:
-        return "ok"
-
-    async def call_multimodal_model(self, prompt: str, image: bytes, **kwargs) -> str:
-        return "ok"
-
-    def supports_model_type(self, model_type: ModelType) -> bool:
-        return True
+@pytest.fixture(autouse=True)
+def reset_loader():
+    set_standalone_settings_loader(None)
+    yield
+    set_standalone_settings_loader(None)
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("OPENAI_API_BASE_URL", "https://example.com/v1")
     monkeypatch.setenv("VISION_API_KEY", "test-key")
     monkeypatch.setenv("VISION_API_BASE_URL", "https://example.com/v1")
+
+    settings = ReportCheckSettings(
+        upload_path=str(tmp_path / "uploads"),
+        artifacts_path=str(tmp_path / "tasks"),
+        default_provider="openai",
+        providers={
+            "openai": {
+                "text_api_key": "test-key",
+                "text_base_url": "https://example.com/v1",
+                "multimodal_api_key": "test-key",
+                "multimodal_base_url": "https://example.com/v1",
+                "text_model": "fake-text",
+                "multimodal_model": "fake-mm",
+            }
+        },
+    )
+    set_standalone_settings_loader(lambda: settings)
+
     with TestClient(app) as c:
         yield c
 
@@ -46,75 +59,59 @@ class TestHealthEndpoint:
         assert "version" in data
 
     def test_lifespan_loads_concurrency_config_into_runtime(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-        monkeypatch.setenv("OPENAI_API_BASE_URL", "https://example.com/v1")
-        monkeypatch.setenv("VISION_API_KEY", "test-key")
-        monkeypatch.setenv("VISION_API_BASE_URL", "https://example.com/v1")
-
-        def fake_load_config(path: str):
-            if path.endswith("models.yaml"):
-                return {
-                    "default_provider": "fake",
-                    "providers": {
-                        "fake": {
-                            "api_key": "ignored",
-                            "base_url": "https://example.com/v1",
-                            "max_concurrency": 7,
-                            "text_max_concurrency": 3,
-                            "multimodal_max_concurrency": 2,
-                        }
-                    },
-                }
-
-            if path.endswith("app.yaml"):
-                return {
-                    "storage": {
-                        "database_path": str(tmp_path / "test.db"),
-                        "upload_path": str(tmp_path / "uploads"),
-                        "artifacts_path": str(tmp_path / "tasks"),
-                    },
-                    "execution": {
-                        "max_waiting_tasks": 2,
-                        "worker_concurrency": 4,
-                        "per_task_rule_concurrency": 6,
-                    },
-                    "external_api_limits": {
-                        "default_max_concurrency": 3,
-                        "by_endpoint": {"inventory-api": 1},
-                    },
-                }
-
-            raise AssertionError(f"Unexpected config path: {path}")
-
         async def fake_worker_start(self):
             return None
 
         async def fake_worker_stop(self):
             return None
 
-        monkeypatch.setattr("report_check.main.load_config", fake_load_config)
-        monkeypatch.setattr("report_check.main.OpenAIAdapter", FakeConfiguredAdapter)
-        monkeypatch.setattr("report_check.main.BackgroundWorker.start", fake_worker_start)
-        monkeypatch.setattr("report_check.main.BackgroundWorker.stop", fake_worker_stop)
+        monkeypatch.setattr("report_check.bootstrap.BackgroundWorker.start", fake_worker_start)
+        monkeypatch.setattr("report_check.bootstrap.BackgroundWorker.stop", fake_worker_stop)
+
+        settings = ReportCheckSettings(
+            upload_path=str(tmp_path / "uploads"),
+            artifacts_path=str(tmp_path / "tasks"),
+            max_waiting_tasks=2,
+            worker_concurrency=4,
+            per_task_rule_concurrency=6,
+            default_provider="fake",
+            providers={
+                "fake": {
+                    "text_api_key": "ignored",
+                    "text_base_url": "https://example.com/v1",
+                    "multimodal_api_key": "ignored",
+                    "multimodal_base_url": "https://example.com/v1",
+                    "max_concurrency": 7,
+                    "text_max_concurrency": 3,
+                    "multimodal_max_concurrency": 2,
+                }
+            },
+            external_api_limits={
+                "default_max_concurrency": 3,
+                "by_endpoint": {"inventory-api": 1},
+            },
+        )
+        set_standalone_settings_loader(lambda: settings)
 
         with TestClient(app) as client:
-            queue = client.app.state.task_queue
+            runtime = client.app.state.report_check_runtime
+            queue = runtime.task_queue
             assert queue.try_enqueue("t1") is True
             assert queue.try_enqueue("t2") is True
             assert queue.try_enqueue("t3") is False
 
-            worker = client.app.state.worker
+            worker = runtime.worker
             assert worker.worker_concurrency == 4
             assert worker.per_task_rule_concurrency == 6
 
-            limiter = client.app.state.external_api_limiter
+            limiter = runtime.external_api_limiter
             assert limiter._default_state.semaphore is not None
             assert limiter._default_state.semaphore._value == 3
             assert "inventory-api" in limiter._endpoint_states
             assert limiter._endpoint_states["inventory-api"].semaphore is not None
             assert limiter._endpoint_states["inventory-api"].semaphore._value == 1
 
-            model_state = client.app.state.model_manager._provider_states["fake"]
+            model_state = runtime.model_manager._provider_states["fake"]
             assert model_state.total_semaphore is not None
             assert model_state.total_semaphore._value == 7
             assert model_state.text_semaphore is not None
@@ -125,11 +122,13 @@ class TestHealthEndpoint:
 
 class TestSubmitEndpoint:
     def test_submit_valid(self, client, sample_excel_path):
-        rules = json.dumps({
-            "rules": [
-                {"id": "r1", "name": "test", "type": "text", "config": {"keywords": ["交付"]}}
-            ]
-        })
+        rules = json.dumps(
+            {
+                "rules": [
+                    {"id": "r1", "name": "test", "type": "text", "config": {"keywords": ["交付"]}}
+                ]
+            }
+        )
         with open(sample_excel_path, "rb") as f:
             resp = client.post(
                 "/api/v1/check/submit",
@@ -160,19 +159,21 @@ class TestSubmitEndpoint:
         assert resp.status_code == 400
 
     def test_submit_returns_429_when_waiting_queue_is_full(self, client, sample_excel_path):
-        client.app.state.task_queue = TaskQueue(maxsize=1)
-        client.app.state.task_queue._queue.put_nowait("queued-task")
+        runtime = client.app.state.report_check_runtime
+        runtime.task_queue = TaskQueue(maxsize=1)
+        runtime.task_queue._queue.put_nowait("queued-task")
 
-        db_path = client.app.state.db.db_path
-        upload_root = client.app.state.file_storage.base_path
-        before_task_count = self._count_tasks(db_path)
+        upload_root = runtime.file_storage.base_path
+        before_task_count = self._count_tasks(runtime.task_store)
         before_upload_dirs = self._count_upload_dirs(upload_root)
 
-        rules = json.dumps({
-            "rules": [
-                {"id": "r1", "name": "test", "type": "text", "config": {"keywords": ["交付"]}}
-            ]
-        })
+        rules = json.dumps(
+            {
+                "rules": [
+                    {"id": "r1", "name": "test", "type": "text", "config": {"keywords": ["交付"]}}
+                ]
+            }
+        )
         with open(sample_excel_path, "rb") as f:
             resp = client.post(
                 "/api/v1/check/submit",
@@ -182,13 +183,11 @@ class TestSubmitEndpoint:
 
         assert resp.status_code == 429
         assert resp.headers["Retry-After"] == "30"
-        assert self._count_tasks(db_path) == before_task_count
+        assert self._count_tasks(runtime.task_store) == before_task_count
         assert self._count_upload_dirs(upload_root) == before_upload_dirs
 
-    def _count_tasks(self, db_path: str) -> int:
-        with sqlite3.connect(db_path) as conn:
-            row = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()
-        return int(row[0])
+    def _count_tasks(self, task_store) -> int:
+        return len(task_store._tasks)
 
     def _count_upload_dirs(self, upload_root: Path) -> int:
         if not upload_root.exists():

@@ -146,5 +146,4 @@ providers:
 | `POST` | `/api/v1/check/submit` | 提交检查任务 |
 | `GET` | `/api/v1/check/result/{task_id}` | 查询检查结果 |
 | `POST` | `/api/v1/rules/validate` | 验证规则 DSL |
-| `GET` | `/api/v1/templates` | 获取规则模板列表 |
 | `GET` | `/api/v1/health` | 健康检查 |

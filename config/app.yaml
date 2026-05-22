@@ -3,13 +3,13 @@ server:
   port: 8000
 
 storage:
-  database_path: "data/reports.db"
   upload_path: "data/uploads"
 
 execution:
   max_waiting_tasks: 10
   worker_concurrency: 2
   per_task_rule_concurrency: 5
+  completed_task_retention_seconds: 300
 
 external_api_limits:
   default_max_concurrency: 2
@@ -19,7 +19,6 @@ limits:
   max_file_size_mb: 20
   max_cells: 50000
   max_images: 50
-  rate_limit: "10/minute"
 
 summarizer:
   max_cell_length: 200

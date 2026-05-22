@@ -97,7 +97,9 @@ class OpenAIAdapter(BaseModelAdapter):
         text_kwargs.setdefault("token_ttl", default_ttl)
         self.text_client, self._text_cache = _create_auth_httpx_client(**text_kwargs)
         self.text_client_openai = AsyncOpenAI(
-            api_key="",  # Auth handled by httpx client
+            # Newer OpenAI SDKs require a non-empty api_key even when auth is
+            # fully handled by the injected httpx client.
+            api_key=self._sdk_api_key_placeholder(text_kwargs),
             base_url=text_kwargs.get("base_url"),  # Use the base_url from config
             http_client=self.text_client,
         )
@@ -108,7 +110,7 @@ class OpenAIAdapter(BaseModelAdapter):
         mm_kwargs.setdefault("token_ttl", default_ttl)
         self.multimodal_client, self._mm_cache = _create_auth_httpx_client(**mm_kwargs)
         self.multimodal_client_openai = AsyncOpenAI(
-            api_key="",
+            api_key=self._sdk_api_key_placeholder(mm_kwargs),
             base_url=mm_kwargs.get("base_url"),
             http_client=self.multimodal_client,
         )
@@ -137,6 +139,15 @@ class OpenAIAdapter(BaseModelAdapter):
             }
         else:
             raise ValueError(f"Unknown auth_mode: {auth_mode}")
+
+    @staticmethod
+    def _sdk_api_key_placeholder(auth_kwargs: dict[str, Any]) -> str:
+        """Return a non-empty api_key for the OpenAI SDK constructor.
+
+        The actual request auth is handled by the injected httpx client, but
+        the SDK still validates that api_key is present.
+        """
+        return auth_kwargs.get("api_key") or "unused-api-key"
 
     async def call_text_model(self, prompt: str, **kwargs) -> str:
         response = await self.text_client_openai.chat.completions.create(

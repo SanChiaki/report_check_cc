@@ -1,20 +1,24 @@
 import asyncio
 import json
-import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from report_check.checkers.base import CheckResult
 from report_check.checkers.factory import CheckerFactory
-from report_check.storage.database import Database, TaskStatus
+from report_check.models.manager import ModelManager
+from report_check.storage.artifacts import ArtifactsManager
+from report_check.storage.file import FileStorage
+from report_check.storage.task_store import TaskStatus, TaskStore
+from report_check.worker.cleanup import TaskCleanupManager
 from report_check.worker.queue import TaskQueue
 from report_check.worker.worker import BackgroundWorker
-from report_check.models.manager import ModelManager
 
 
 @pytest.fixture
-def db(tmp_path: Path) -> Database:
-    return Database(str(tmp_path / "test.db"))
+def task_store() -> TaskStore:
+    return TaskStore()
 
 
 @pytest.fixture
@@ -35,10 +39,10 @@ class TestTaskQueue:
 
 class TestBackgroundWorker:
     @pytest.mark.asyncio
-    async def test_start_creates_multiple_worker_loops(self, db, task_queue):
+    async def test_start_creates_multiple_worker_loops(self, task_store, task_queue):
         mm = ModelManager(default_provider="fake")
         worker = BackgroundWorker(
-            db=db,
+            task_store=task_store,
             model_manager=mm,
             task_queue=task_queue,
             worker_concurrency=2,
@@ -52,13 +56,13 @@ class TestBackgroundWorker:
             await worker.stop()
 
     @pytest.mark.asyncio
-    async def test_multiple_workers_process_queue_concurrently(self, db, task_queue):
+    async def test_multiple_workers_process_queue_concurrently(self, task_store, task_queue):
         await task_queue.enqueue("t1")
         await task_queue.enqueue("t2")
 
         mm = ModelManager(default_provider="fake")
         worker = BackgroundWorker(
-            db=db,
+            task_store=task_store,
             model_manager=mm,
             task_queue=task_queue,
             worker_concurrency=2,
@@ -88,7 +92,7 @@ class TestBackgroundWorker:
     @pytest.mark.asyncio
     async def test_process_task_runs_rules_concurrently_and_preserves_result_order(
         self,
-        db,
+        task_store,
         task_queue,
         sample_excel_path,
         monkeypatch,
@@ -100,7 +104,7 @@ class TestBackgroundWorker:
                 {"id": "r3", "name": "third", "type": "text", "config": {"delay": 0.01, "message": "third"}},
             ]
         }
-        await db.create_task(
+        await task_store.create_task(
             task_id="t-concurrent",
             file_name="test.xlsx",
             file_path=str(sample_excel_path),
@@ -130,21 +134,21 @@ class TestBackgroundWorker:
 
         mm = ModelManager(default_provider="fake")
         worker = BackgroundWorker(
-            db=db,
+            task_store=task_store,
             model_manager=mm,
             task_queue=task_queue,
             per_task_rule_concurrency=2,
         )
         await worker._process_task("t-concurrent")
 
-        results = await db.get_check_results("t-concurrent")
+        results = await task_store.get_check_results("t-concurrent")
         assert max_inflight == 2
         assert [result["message"] for result in results] == ["first", "second", "third"]
 
     @pytest.mark.asyncio
     async def test_rule_exception_becomes_error_result_without_failing_task(
         self,
-        db,
+        task_store,
         task_queue,
         sample_excel_path,
         monkeypatch,
@@ -155,7 +159,7 @@ class TestBackgroundWorker:
                 {"id": "r2", "name": "ok", "type": "text", "config": {"message": "ok"}},
             ]
         }
-        await db.create_task(
+        await task_store.create_task(
             task_id="t-rule-error",
             file_name="test.xlsx",
             file_path=str(sample_excel_path),
@@ -176,34 +180,34 @@ class TestBackgroundWorker:
 
         mm = ModelManager(default_provider="fake")
         worker = BackgroundWorker(
-            db=db,
+            task_store=task_store,
             model_manager=mm,
             task_queue=task_queue,
             per_task_rule_concurrency=2,
         )
         await worker._process_task("t-rule-error")
 
-        task = await db.get_task("t-rule-error")
-        results = await db.get_check_results("t-rule-error")
+        task = await task_store.get_task("t-rule-error")
+        results = await task_store.get_check_results("t-rule-error")
 
+        assert task is not None
         assert task["status"] == "completed"
         assert [result["status"] for result in results] == ["error", "passed"]
 
     @pytest.mark.asyncio
     async def test_process_task_offloads_parse_work_to_thread(
         self,
-        db,
+        task_store,
         task_queue,
         sample_excel_path,
         monkeypatch,
     ):
         rules = {
             "rules": [
-                {"id": "r1", "name": "check keyword", "type": "text",
-                 "config": {"keywords": ["交付内容"], "match_mode": "any"}}
+                {"id": "r1", "name": "check keyword", "type": "text", "config": {"keywords": ["交付内容"], "match_mode": "any"}}
             ]
         }
-        await db.create_task(
+        await task_store.create_task(
             task_id="t-thread",
             file_name="test.xlsx",
             file_path=str(sample_excel_path),
@@ -220,7 +224,7 @@ class TestBackgroundWorker:
         monkeypatch.setattr("report_check.worker.worker.asyncio.to_thread", recording_to_thread)
 
         mm = ModelManager(default_provider="fake")
-        worker = BackgroundWorker(db=db, model_manager=mm, task_queue=task_queue)
+        worker = BackgroundWorker(task_store=task_store, model_manager=mm, task_queue=task_queue)
         await worker._process_task("t-thread")
 
         assert to_thread_calls
@@ -228,7 +232,7 @@ class TestBackgroundWorker:
     @pytest.mark.asyncio
     async def test_process_task_reuses_rendered_pages_across_concurrent_render_rules(
         self,
-        db,
+        task_store,
         task_queue,
         sample_excel_path,
         monkeypatch,
@@ -249,7 +253,7 @@ class TestBackgroundWorker:
                 },
             ]
         }
-        await db.create_task(
+        await task_store.create_task(
             task_id="t-render-cache",
             file_name="test.xlsx",
             file_path=str(sample_excel_path),
@@ -274,30 +278,29 @@ class TestBackgroundWorker:
         mm = MagicMock()
         mm.call_multimodal_model = AsyncMock(side_effect=fake_call_multimodal_model)
         worker = BackgroundWorker(
-            db=db,
+            task_store=task_store,
             model_manager=mm,
             task_queue=task_queue,
             per_task_rule_concurrency=2,
         )
         await worker._process_task("t-render-cache")
 
-        task = await db.get_task("t-render-cache")
-        results = await db.get_check_results("t-render-cache")
+        task = await task_store.get_task("t-render-cache")
+        results = await task_store.get_check_results("t-render-cache")
 
+        assert task is not None
         assert task["status"] == "completed"
         assert len(results) == 2
         assert render_calls == 1
 
     @pytest.mark.asyncio
-    async def test_process_text_check_task(self, db, task_queue, sample_excel_path):
-        """End-to-end: enqueue a task with text rule, process, verify results."""
+    async def test_process_text_check_task(self, task_store, task_queue, sample_excel_path):
         rules = {
             "rules": [
-                {"id": "r1", "name": "check keyword", "type": "text",
-                 "config": {"keywords": ["交付内容"], "match_mode": "any"}}
+                {"id": "r1", "name": "check keyword", "type": "text", "config": {"keywords": ["交付内容"], "match_mode": "any"}}
             ]
         }
-        await db.create_task(
+        await task_store.create_task(
             task_id="t1",
             file_name="test.xlsx",
             file_path=str(sample_excel_path),
@@ -306,22 +309,121 @@ class TestBackgroundWorker:
         await task_queue.enqueue("t1")
 
         mm = ModelManager(default_provider="fake")
-        worker = BackgroundWorker(db=db, model_manager=mm, task_queue=task_queue)
-        # Process one task directly
+        worker = BackgroundWorker(task_store=task_store, model_manager=mm, task_queue=task_queue)
         await worker._process_task("t1")
 
-        task = await db.get_task("t1")
+        task = await task_store.get_task("t1")
+        assert task is not None
         assert task["status"] == "completed"
 
-        results = await db.get_check_results("t1")
+        results = await task_store.get_check_results("t1")
         assert len(results) == 1
         assert results[0]["status"] == "passed"
 
     @pytest.mark.asyncio
-    async def test_process_task_invalid_file_fails(self, db, task_queue, tmp_path):
-        """Task with nonexistent file should fail gracefully."""
+    async def test_completed_task_is_cleaned_after_retention(
+        self,
+        tmp_path,
+        task_store,
+        task_queue,
+        sample_excel_path,
+    ):
+        upload_storage = FileStorage(str(tmp_path / "uploads"))
+        artifacts_manager = ArtifactsManager(str(tmp_path / "tasks"))
+        cleanup_manager = TaskCleanupManager(
+            task_store=task_store,
+            file_storage=upload_storage,
+            artifacts_manager=artifacts_manager,
+            retention_seconds=0.01,
+        )
+
+        upload_path = await upload_storage.save_uploaded_file(
+            Path(sample_excel_path).read_bytes(),
+            "test.xlsx",
+            "t-clean",
+        )
+        rules = {
+            "rules": [
+                {"id": "r1", "name": "check keyword", "type": "text", "config": {"keywords": ["浜や粯鍐呭"], "match_mode": "any"}}
+            ]
+        }
+        await task_store.create_task(
+            task_id="t-clean",
+            file_name="test.xlsx",
+            file_path=upload_path,
+            rules=rules,
+        )
+
+        worker = BackgroundWorker(
+            task_store=task_store,
+            model_manager=ModelManager(default_provider="fake"),
+            task_queue=task_queue,
+            artifacts_manager=artifacts_manager,
+            cleanup_manager=cleanup_manager,
+        )
+
+        await worker._process_task("t-clean")
+        assert await task_store.get_task("t-clean") is not None
+
+        await asyncio.sleep(0.05)
+
+        assert await task_store.get_task("t-clean") is None
+        assert not (tmp_path / "uploads" / "t-clean").exists()
+        assert not (tmp_path / "tasks" / "t-clean").exists()
+        await cleanup_manager.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_failed_task_is_cleaned_after_retention(
+        self,
+        tmp_path,
+        task_store,
+        task_queue,
+    ):
+        upload_storage = FileStorage(str(tmp_path / "uploads"))
+        artifacts_manager = ArtifactsManager(str(tmp_path / "tasks"))
+        cleanup_manager = TaskCleanupManager(
+            task_store=task_store,
+            file_storage=upload_storage,
+            artifacts_manager=artifacts_manager,
+            retention_seconds=0.01,
+        )
+
+        upload_path = await upload_storage.save_uploaded_file(
+            b"not a workbook",
+            "broken.xlsx",
+            "t-failed-clean",
+        )
+        await task_store.create_task(
+            task_id="t-failed-clean",
+            file_name="broken.xlsx",
+            file_path=upload_path,
+            rules={"rules": []},
+        )
+
+        worker = BackgroundWorker(
+            task_store=task_store,
+            model_manager=ModelManager(default_provider="fake"),
+            task_queue=task_queue,
+            artifacts_manager=artifacts_manager,
+            cleanup_manager=cleanup_manager,
+        )
+
+        await worker._process_task("t-failed-clean")
+        task = await task_store.get_task("t-failed-clean")
+        assert task is not None
+        assert task["status"] == "failed"
+
+        await asyncio.sleep(0.05)
+
+        assert await task_store.get_task("t-failed-clean") is None
+        assert not (tmp_path / "uploads" / "t-failed-clean").exists()
+        assert not (tmp_path / "tasks" / "t-failed-clean").exists()
+        await cleanup_manager.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_process_task_invalid_file_fails(self, task_store, task_queue, tmp_path):
         rules = {"rules": [{"id": "r1", "name": "t", "type": "text", "config": {"keywords": ["x"]}}]}
-        await db.create_task(
+        await task_store.create_task(
             task_id="t2",
             file_name="missing.xlsx",
             file_path=str(tmp_path / "missing.xlsx"),
@@ -329,31 +431,29 @@ class TestBackgroundWorker:
         )
 
         mm = ModelManager(default_provider="fake")
-        worker = BackgroundWorker(db=db, model_manager=mm, task_queue=task_queue)
+        worker = BackgroundWorker(task_store=task_store, model_manager=mm, task_queue=task_queue)
         await worker._process_task("t2")
 
-        task = await db.get_task("t2")
+        task = await task_store.get_task("t2")
+        assert task is not None
         assert task["status"] == "failed"
         assert task["error"] is not None
 
     @pytest.mark.asyncio
-    async def test_crash_recovery(self, db, task_queue, sample_excel_path):
-        """Processing tasks should be re-enqueued on startup."""
+    async def test_no_crash_recovery_on_startup(self, task_store, task_queue, sample_excel_path):
         rules = {"rules": []}
-        await db.create_task(
+        await task_store.create_task(
             task_id="t3",
             file_name="test.xlsx",
             file_path=str(sample_excel_path),
             rules=rules,
         )
-        await db.update_task_status("t3", TaskStatus.PROCESSING)
+        await task_store.update_task_status("t3", TaskStatus.PROCESSING)
 
         mm = ModelManager(default_provider="fake")
-        worker = BackgroundWorker(db=db, model_manager=mm, task_queue=task_queue)
-
-        # Simulate startup recovery (without starting the run loop)
-        recovered = await db.recover_orphaned_tasks()
-        for tid in recovered:
-            await task_queue.enqueue(tid)
-
-        assert task_queue.size() == 1
+        worker = BackgroundWorker(task_store=task_store, model_manager=mm, task_queue=task_queue)
+        await worker.start()
+        try:
+            assert task_queue.size() == 0
+        finally:
+            await worker.stop()
