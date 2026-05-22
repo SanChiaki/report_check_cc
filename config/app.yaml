@@ -9,6 +9,7 @@ execution:
   max_waiting_tasks: 10
   worker_concurrency: 2
   per_task_rule_concurrency: 5
+  completed_task_retention_seconds: 300
 
 external_api_limits:
   default_max_concurrency: 2

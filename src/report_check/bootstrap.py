@@ -10,6 +10,7 @@ from report_check.settings import ReportCheckSettings
 from report_check.storage.artifacts import ArtifactsManager
 from report_check.storage.file import FileStorage
 from report_check.storage.task_store import TaskStore
+from report_check.worker.cleanup import TaskCleanupManager
 from report_check.worker.queue import TaskQueue
 from report_check.worker.worker import BackgroundWorker
 
@@ -36,6 +37,13 @@ def create_runtime(settings: ReportCheckSettings) -> ReportCheckRuntime:
         by_endpoint=external_api_limits.get("by_endpoint", {}),
     )
 
+    cleanup_manager = TaskCleanupManager(
+        task_store=task_store,
+        file_storage=file_storage,
+        artifacts_manager=artifacts_manager,
+        retention_seconds=settings.completed_task_retention_seconds,
+    )
+
     worker = BackgroundWorker(
         task_store=task_store,
         model_manager=model_manager,
@@ -44,6 +52,7 @@ def create_runtime(settings: ReportCheckSettings) -> ReportCheckRuntime:
         worker_concurrency=settings.worker_concurrency,
         per_task_rule_concurrency=settings.per_task_rule_concurrency,
         external_api_limiter=external_api_limiter,
+        cleanup_manager=cleanup_manager,
     )
 
     return ReportCheckRuntime(
@@ -53,6 +62,7 @@ def create_runtime(settings: ReportCheckSettings) -> ReportCheckRuntime:
         artifacts_manager=artifacts_manager,
         model_manager=model_manager,
         external_api_limiter=external_api_limiter,
+        cleanup_manager=cleanup_manager,
         worker=worker,
     )
 
@@ -75,4 +85,5 @@ async def shutdown_report_check() -> None:
             await adapter.close()
 
     await runtime.worker.stop()
+    await runtime.cleanup_manager.shutdown()
     clear_runtime()

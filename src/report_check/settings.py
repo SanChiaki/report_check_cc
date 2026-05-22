@@ -11,6 +11,7 @@ class ReportCheckSettings:
     max_waiting_tasks: int = 10
     worker_concurrency: int = 1
     per_task_rule_concurrency: int = 1
+    completed_task_retention_seconds: float = 300
     default_provider: str = "openai"
     providers: dict[str, dict[str, Any]] = field(default_factory=dict)
     external_api_limits: dict[str, Any] = field(default_factory=dict)
@@ -34,6 +35,10 @@ class ReportCheckSettings:
             worker_concurrency=execution.get("worker_concurrency", cls.worker_concurrency),
             per_task_rule_concurrency=execution.get(
                 "per_task_rule_concurrency", cls.per_task_rule_concurrency
+            ),
+            completed_task_retention_seconds=execution.get(
+                "completed_task_retention_seconds",
+                cls.completed_task_retention_seconds,
             ),
             default_provider=model_config.get("default_provider", cls.default_provider),
             providers=model_config.get("providers", {}),

@@ -43,6 +43,7 @@ class BackgroundWorker:
         worker_concurrency: int = 1,
         per_task_rule_concurrency: int = 1,
         external_api_limiter=None,
+        cleanup_manager=None,
     ):
         self.task_store = task_store
         self.model_manager = model_manager
@@ -51,6 +52,7 @@ class BackgroundWorker:
         self.worker_concurrency = max(worker_concurrency, 1)
         self.per_task_rule_concurrency = max(per_task_rule_concurrency, 1)
         self.external_api_limiter = external_api_limiter
+        self.cleanup_manager = cleanup_manager
         self._running = False
         self._workers: list[asyncio.Task] = []
         self._running_tasks = 0
@@ -249,6 +251,7 @@ class BackgroundWorker:
                 })
 
             await self.task_store.update_task_status(task_id, TaskStatus.COMPLETED)
+            self._schedule_cleanup(task_id)
 
         except Exception as e:
             logger.error(f"Task {task_id} failed: {e}", exc_info=True)
@@ -262,6 +265,11 @@ class BackgroundWorker:
                     "status": "failed",
                     "error": str(e),
                 })
+            self._schedule_cleanup(task_id)
+
+    def _schedule_cleanup(self, task_id: str) -> None:
+        if self.cleanup_manager is not None:
+            self.cleanup_manager.schedule_cleanup(task_id)
 
     async def _execute_rules(
         self,

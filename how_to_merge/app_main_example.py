@@ -27,6 +27,10 @@ def build_report_check_settings(cfg_dict: dict) -> ReportCheckSettings:
         max_waiting_tasks=report_cfg.get("max_waiting_tasks", 10),
         worker_concurrency=report_cfg.get("worker_concurrency", 1),
         per_task_rule_concurrency=report_cfg.get("per_task_rule_concurrency", 1),
+        completed_task_retention_seconds=report_cfg.get(
+            "completed_task_retention_seconds",
+            300,
+        ),
         default_provider=report_cfg.get("default_provider", "openai"),
         providers=report_cfg.get("providers", {}),
         external_api_limits=report_cfg.get("external_api_limits", {}),

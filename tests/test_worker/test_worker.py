@@ -8,7 +8,10 @@ import pytest
 from report_check.checkers.base import CheckResult
 from report_check.checkers.factory import CheckerFactory
 from report_check.models.manager import ModelManager
+from report_check.storage.artifacts import ArtifactsManager
+from report_check.storage.file import FileStorage
 from report_check.storage.task_store import TaskStatus, TaskStore
+from report_check.worker.cleanup import TaskCleanupManager
 from report_check.worker.queue import TaskQueue
 from report_check.worker.worker import BackgroundWorker
 
@@ -316,6 +319,106 @@ class TestBackgroundWorker:
         results = await task_store.get_check_results("t1")
         assert len(results) == 1
         assert results[0]["status"] == "passed"
+
+    @pytest.mark.asyncio
+    async def test_completed_task_is_cleaned_after_retention(
+        self,
+        tmp_path,
+        task_store,
+        task_queue,
+        sample_excel_path,
+    ):
+        upload_storage = FileStorage(str(tmp_path / "uploads"))
+        artifacts_manager = ArtifactsManager(str(tmp_path / "tasks"))
+        cleanup_manager = TaskCleanupManager(
+            task_store=task_store,
+            file_storage=upload_storage,
+            artifacts_manager=artifacts_manager,
+            retention_seconds=0.01,
+        )
+
+        upload_path = await upload_storage.save_uploaded_file(
+            Path(sample_excel_path).read_bytes(),
+            "test.xlsx",
+            "t-clean",
+        )
+        rules = {
+            "rules": [
+                {"id": "r1", "name": "check keyword", "type": "text", "config": {"keywords": ["浜や粯鍐呭"], "match_mode": "any"}}
+            ]
+        }
+        await task_store.create_task(
+            task_id="t-clean",
+            file_name="test.xlsx",
+            file_path=upload_path,
+            rules=rules,
+        )
+
+        worker = BackgroundWorker(
+            task_store=task_store,
+            model_manager=ModelManager(default_provider="fake"),
+            task_queue=task_queue,
+            artifacts_manager=artifacts_manager,
+            cleanup_manager=cleanup_manager,
+        )
+
+        await worker._process_task("t-clean")
+        assert await task_store.get_task("t-clean") is not None
+
+        await asyncio.sleep(0.05)
+
+        assert await task_store.get_task("t-clean") is None
+        assert not (tmp_path / "uploads" / "t-clean").exists()
+        assert not (tmp_path / "tasks" / "t-clean").exists()
+        await cleanup_manager.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_failed_task_is_cleaned_after_retention(
+        self,
+        tmp_path,
+        task_store,
+        task_queue,
+    ):
+        upload_storage = FileStorage(str(tmp_path / "uploads"))
+        artifacts_manager = ArtifactsManager(str(tmp_path / "tasks"))
+        cleanup_manager = TaskCleanupManager(
+            task_store=task_store,
+            file_storage=upload_storage,
+            artifacts_manager=artifacts_manager,
+            retention_seconds=0.01,
+        )
+
+        upload_path = await upload_storage.save_uploaded_file(
+            b"not a workbook",
+            "broken.xlsx",
+            "t-failed-clean",
+        )
+        await task_store.create_task(
+            task_id="t-failed-clean",
+            file_name="broken.xlsx",
+            file_path=upload_path,
+            rules={"rules": []},
+        )
+
+        worker = BackgroundWorker(
+            task_store=task_store,
+            model_manager=ModelManager(default_provider="fake"),
+            task_queue=task_queue,
+            artifacts_manager=artifacts_manager,
+            cleanup_manager=cleanup_manager,
+        )
+
+        await worker._process_task("t-failed-clean")
+        task = await task_store.get_task("t-failed-clean")
+        assert task is not None
+        assert task["status"] == "failed"
+
+        await asyncio.sleep(0.05)
+
+        assert await task_store.get_task("t-failed-clean") is None
+        assert not (tmp_path / "uploads" / "t-failed-clean").exists()
+        assert not (tmp_path / "tasks" / "t-failed-clean").exists()
+        await cleanup_manager.shutdown()
 
     @pytest.mark.asyncio
     async def test_process_task_invalid_file_fails(self, task_store, task_queue, tmp_path):
