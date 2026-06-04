@@ -6,7 +6,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
-    from report_check.parser.report_data import ReportData
+    from report_check.parser.models import ReportData
     from report_check.storage.artifacts import CheckArtifact
 
 logger = logging.getLogger(__name__)
